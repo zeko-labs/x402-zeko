@@ -2,7 +2,7 @@
 
 `zeko-x402` is a standalone x402 starter for Zeko-centric services.
 
-It keeps the parts people like about x402 on Base and Coinbase:
+It contains these x402 features:
 
 - standard `402 Payment Required` negotiation
 - `PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, and `PAYMENT-RESPONSE` headers
@@ -21,11 +21,6 @@ Default settlement assets in this repo are:
 - Base mainnet: canonical USDC
 - Ethereum mainnet: canonical USDC
 - Zeko testnet: `tMINA`, the canonical Zeko testnet gas token
-
-This project is intentionally separate from `clawz`. Its goal is to let one Zeko-backed service optionally ask for payment on either:
-
-- Zeko itself
-- an EVM chain such as Base, Ethereum mainnet, or another `eip155:<chainId>` network
 
 It now carries signed payment authorization payloads, can submit signed Zeko GraphQL payment/zkApp commands, and can either call an external HTTP facilitator or relay EVM settlement itself for Base/Ethereum USDC. The remaining app-specific piece is the actual zkApp contract call body for your Zeko settlement contract.
 
