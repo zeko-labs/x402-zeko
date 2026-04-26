@@ -1,0 +1,75 @@
+{
+  "name": "zeko-x402",
+  "version": "0.1.0",
+  "description": "Multi-rail x402 settlement toolkit for Zeko, Base, and Ethereum.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zeko-labs/x402-zeko.git"
+  },
+  "homepage": "https://github.com/zeko-labs/x402-zeko#readme",
+  "bugs": {
+    "url": "https://github.com/zeko-labs/x402-zeko/issues"
+  },
+  "keywords": [
+    "x402",
+    "zeko",
+    "mina",
+    "base",
+    "ethereum",
+    "usdc",
+    "payments",
+    "zk"
+  ],
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "README.md",
+    "src",
+    "scripts",
+    "contracts",
+    "zkapp",
+    "dist-zkapp",
+    "docs",
+    "tsconfig.zkapp.json",
+    ".env.example",
+    ".gitignore"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "zeko-x402-key-manager": "./scripts/key-manager.mjs"
+  },
+  "scripts": {
+    "start": "pnpm evm:facilitator",
+    "test": "node --test test/*.test.mjs",
+    "build:zkapp": "tsc -p tsconfig.zkapp.json",
+    "key-manager": "node --enable-source-maps scripts/key-manager.mjs",
+    "doctor:rails": "pnpm build:zkapp && node --env-file-if-exists=.env --enable-source-maps scripts/doctor.mjs",
+    "doctor:ethereum": "pnpm build:zkapp && env X402_EVM_NETWORK=ethereum node --env-file-if-exists=.env --enable-source-maps scripts/doctor.mjs",
+    "evm:facilitator": "node --env-file-if-exists=.env --enable-source-maps scripts/evm-facilitator.mjs",
+    "zkapp:deploy": "pnpm build:zkapp && node --env-file-if-exists=.env --enable-source-maps dist-zkapp/zkapp/deploy.js",
+    "zkapp:get-state": "pnpm build:zkapp && node --env-file-if-exists=.env --enable-source-maps dist-zkapp/zkapp/get-state.js",
+    "smoke:evm-flow": "node --env-file-if-exists=.env --enable-source-maps scripts/smoke-evm-flow.mjs",
+    "smoke:ethereum-flow": "env X402_EVM_NETWORK=ethereum node --env-file-if-exists=.env --enable-source-maps scripts/smoke-evm-flow.mjs",
+    "smoke:multirail-offer": "pnpm build:zkapp && node --env-file-if-exists=.env --enable-source-maps scripts/smoke-multirail-offer.mjs",
+    "smoke:zeko-flow": "pnpm build:zkapp && node --env-file-if-exists=.env --enable-source-maps scripts/smoke-zeko-flow.mjs",
+    "pack:dry-run": "npm pack --dry-run",
+    "witness:serve": "node --env-file-if-exists=.env scripts/witness-service.mjs",
+    "witness:record": "node --env-file-if-exists=.env scripts/record-settlement.mjs"
+  },
+  "dependencies": {
+    "o1js": "^2.13.1",
+    "reflect-metadata": "^0.2.2",
+    "viem": "^2.48.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.3"
+  }
+}

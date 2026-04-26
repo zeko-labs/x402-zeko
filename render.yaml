@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: zeko-x402-facilitator
+    runtime: node
+    plan: starter
+    autoDeploy: false
+    buildCommand: corepack enable && pnpm install --frozen-lockfile
+    startCommand: pnpm start
+    healthCheckPath: /health
+    envVars:
+      - key: X402_EVM_FACILITATOR_HOST
+        value: 0.0.0.0
+      - key: X402_EVM_FACILITATOR_PORT
+        value: 10000
+      - key: X402_EVM_NETWORK
+        value: base
+      - key: X402_BASE_RPC_URL
+        sync: false
+      - key: X402_BASE_RELAYER_PRIVATE_KEY
+        sync: false
+      - key: X402_BASE_PAY_TO
+        sync: false
+      - key: X402_ETHEREUM_RPC_URL
+        sync: false
+      - key: X402_ETHEREUM_RELAYER_PRIVATE_KEY
+        sync: false
+      - key: X402_ETHEREUM_PAY_TO
+        sync: false

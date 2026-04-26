@@ -1,0 +1,6 @@
+node_modules
+.env
+.env.local
+.keys
+data/settlement-state*.json
+npm-debug.log*
