@@ -1,4 +1,5 @@
 export * from "./digest.js";
+export * from "./evm-escrow.js";
 export * from "./evm-facilitator.js";
 export * from "./facilitator.js";
 export * from "./facilitator-client.js";

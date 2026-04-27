@@ -19,6 +19,27 @@ function readOptionalEnv(name, fallback = "") {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
 }
 
+function readOptionalEnvList(names) {
+  for (const name of names) {
+    const value = readOptionalEnv(name);
+
+    if (!value) {
+      continue;
+    }
+
+    const items = value
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+
+    if (items.length > 0) {
+      return items;
+    }
+  }
+
+  return [];
+}
+
 function readFirstEnv(names) {
   for (const name of names) {
     const value = readOptionalEnv(name);
@@ -67,15 +88,18 @@ function normalizeEvmNetwork() {
 }
 
 function resolveSelfHostedEvm(network) {
-  const rpcUrl =
+  const rpcUrls =
     network.name === "base"
-      ? readOptionalEnv("X402_BASE_RPC_URL", readOptionalEnv("BASE_RPC_URL", readOptionalEnv("X402_EVM_RPC_URL")))
+      ? readOptionalEnvList(["X402_BASE_RPC_URLS", "X402_BASE_RPC_URL", "BASE_RPC_URL", "X402_EVM_RPC_URLS", "X402_EVM_RPC_URL"])
       : network.name === "ethereum"
-        ? readOptionalEnv(
+        ? readOptionalEnvList([
+            "X402_ETHEREUM_RPC_URLS",
             "X402_ETHEREUM_RPC_URL",
-            readOptionalEnv("ETHEREUM_RPC_URL", readOptionalEnv("X402_EVM_RPC_URL"))
-          )
-        : readOptionalEnv("X402_EVM_RPC_URL");
+            "ETHEREUM_RPC_URL",
+            "X402_EVM_RPC_URLS",
+            "X402_EVM_RPC_URL"
+          ])
+        : readOptionalEnvList(["X402_EVM_RPC_URLS", "X402_EVM_RPC_URL"]);
   const relayerPrivateKey = readFirstEnv(
     network.name === "base"
       ? ["X402_BASE_RELAYER_PRIVATE_KEY", "X402_EVM_RELAYER_PRIVATE_KEY", "EVM_RELAYER_PRIVATE_KEY"]
@@ -85,8 +109,9 @@ function resolveSelfHostedEvm(network) {
   );
 
   return {
-    ready: Boolean(rpcUrl && relayerPrivateKey),
-    rpcUrl: rpcUrl || null,
+    ready: Boolean(rpcUrls.length > 0 && relayerPrivateKey),
+    rpcUrl: rpcUrls[0] ?? null,
+    rpcUrls,
     relayerKeySource: relayerPrivateKey?.name ?? null,
     relayerAddress: relayerPrivateKey
       ? privateKeyToAccount(

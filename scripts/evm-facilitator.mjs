@@ -5,42 +5,66 @@ function readOptionalEnv(name, fallback = "") {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
 }
 
+function readOptionalEnvList(names) {
+  for (const name of names) {
+    const value = readOptionalEnv(name);
+
+    if (!value) {
+      continue;
+    }
+
+    const items = value
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+
+    if (items.length > 0) {
+      return items;
+    }
+  }
+
+  return [];
+}
+
 function buildNetworkConfigs() {
   const requested = readOptionalEnv("X402_EVM_NETWORK", "base").toLowerCase();
-  const genericRpcUrl = readOptionalEnv("X402_EVM_RPC_URL");
+  const genericRpcUrls = readOptionalEnvList(["X402_EVM_RPC_URLS", "X402_EVM_RPC_URL"]);
   const genericRelayerPrivateKey = readOptionalEnv(
     "X402_EVM_RELAYER_PRIVATE_KEY",
     readOptionalEnv("EVM_RELAYER_PRIVATE_KEY")
   );
   const configs = [];
 
-  const baseRpcUrl = readOptionalEnv("X402_BASE_RPC_URL", readOptionalEnv("BASE_RPC_URL"));
+  const baseRpcUrls = readOptionalEnvList(["X402_BASE_RPC_URLS", "X402_BASE_RPC_URL", "BASE_RPC_URL"]);
   const baseRelayerPrivateKey = readOptionalEnv(
     "X402_BASE_RELAYER_PRIVATE_KEY",
     genericRelayerPrivateKey
   );
 
-  if (baseRpcUrl && baseRelayerPrivateKey) {
+  if (baseRpcUrls.length > 0 && baseRelayerPrivateKey) {
     configs.push({
       networkId: "eip155:8453",
-      rpcUrl: baseRpcUrl,
+      rpcUrl: baseRpcUrls[0],
+      rpcUrls: baseRpcUrls,
       relayerPrivateKey: baseRelayerPrivateKey
     });
   }
 
-  const ethereumRpcUrl = readOptionalEnv(
+  const ethereumRpcUrls = readOptionalEnvList([
+    "X402_ETHEREUM_RPC_URLS",
     "X402_ETHEREUM_RPC_URL",
-    readOptionalEnv("ETHEREUM_RPC_URL")
-  );
+    "ETHEREUM_RPC_URL"
+  ]);
   const ethereumRelayerPrivateKey = readOptionalEnv(
     "X402_ETHEREUM_RELAYER_PRIVATE_KEY",
     genericRelayerPrivateKey
   );
 
-  if (ethereumRpcUrl && ethereumRelayerPrivateKey) {
+  if (ethereumRpcUrls.length > 0 && ethereumRelayerPrivateKey) {
     configs.push({
       networkId: "eip155:1",
-      rpcUrl: ethereumRpcUrl,
+      rpcUrl: ethereumRpcUrls[0],
+      rpcUrls: ethereumRpcUrls,
       relayerPrivateKey: ethereumRelayerPrivateKey
     });
   }
@@ -54,16 +78,17 @@ function buildNetworkConfigs() {
       ? "eip155:1"
       : "eip155:8453";
 
-  if (!genericRpcUrl || !genericRelayerPrivateKey) {
+  if (genericRpcUrls.length === 0 || !genericRelayerPrivateKey) {
     throw new Error(
-      "Configure either per-network RPC/relayer env vars or X402_EVM_RPC_URL + X402_EVM_RELAYER_PRIVATE_KEY."
+      "Configure either per-network RPC/relayer env vars or X402_EVM_RPC_URL(S) + X402_EVM_RELAYER_PRIVATE_KEY."
     );
   }
 
   return [
     {
       networkId: selectedNetworkId,
-      rpcUrl: genericRpcUrl,
+      rpcUrl: genericRpcUrls[0],
+      rpcUrls: genericRpcUrls,
       relayerPrivateKey: genericRelayerPrivateKey
     }
   ];
@@ -94,7 +119,8 @@ async function main() {
         baseUrl: `http://${host}:${port}`,
         networks: networks.map((network) => ({
           networkId: network.networkId,
-          rpcUrl: network.rpcUrl
+          rpcUrl: network.rpcUrl,
+          rpcUrls: network.rpcUrls ?? [network.rpcUrl]
         }))
       },
       null,

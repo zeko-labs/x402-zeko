@@ -25,6 +25,27 @@ function readOptionalEnv(name, fallback = "") {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
 }
 
+function readOptionalEnvList(names) {
+  for (const name of names) {
+    const value = readOptionalEnv(name);
+
+    if (!value) {
+      continue;
+    }
+
+    const items = value
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+
+    if (items.length > 0) {
+      return items;
+    }
+  }
+
+  return [];
+}
+
 function requireOneOfEnv(names) {
   for (const name of names) {
     const value = readOptionalEnv(name);
@@ -88,15 +109,18 @@ function resolveAmount(network) {
 }
 
 function resolveSelfHostedConfig(network) {
-  const rpcUrl =
+  const rpcUrls =
     network.name === "base"
-      ? readOptionalEnv("X402_BASE_RPC_URL", readOptionalEnv("BASE_RPC_URL", readOptionalEnv("X402_EVM_RPC_URL")))
+      ? readOptionalEnvList(["X402_BASE_RPC_URLS", "X402_BASE_RPC_URL", "BASE_RPC_URL", "X402_EVM_RPC_URLS", "X402_EVM_RPC_URL"])
       : network.name === "ethereum"
-        ? readOptionalEnv(
+        ? readOptionalEnvList([
+            "X402_ETHEREUM_RPC_URLS",
             "X402_ETHEREUM_RPC_URL",
-            readOptionalEnv("ETHEREUM_RPC_URL", readOptionalEnv("X402_EVM_RPC_URL"))
-          )
-        : readOptionalEnv("X402_EVM_RPC_URL");
+            "ETHEREUM_RPC_URL",
+            "X402_EVM_RPC_URLS",
+            "X402_EVM_RPC_URL"
+          ])
+        : readOptionalEnvList(["X402_EVM_RPC_URLS", "X402_EVM_RPC_URL"]);
   const relayerPrivateKey = readOptionalEnv(
     network.name === "base"
       ? "X402_BASE_RELAYER_PRIVATE_KEY"
@@ -107,14 +131,15 @@ function resolveSelfHostedConfig(network) {
   );
 
   return {
-    rpcUrl,
+    rpcUrl: rpcUrls[0] ?? null,
+    rpcUrls,
     relayerPrivateKey,
     relayerAddress: relayerPrivateKey
       ? privateKeyToAccount(
           relayerPrivateKey.startsWith("0x") ? relayerPrivateKey : `0x${relayerPrivateKey}`
         ).address
       : null,
-    ready: Boolean(rpcUrl && relayerPrivateKey)
+    ready: Boolean(rpcUrls.length > 0 && relayerPrivateKey)
   };
 }
 
@@ -180,6 +205,7 @@ function buildFacilitator(network, input) {
         {
           networkId: network.networkId,
           rpcUrl: input.selfHosted.rpcUrl,
+          rpcUrls: input.selfHosted.rpcUrls,
           relayerPrivateKey: input.selfHosted.relayerPrivateKey
         }
       ]

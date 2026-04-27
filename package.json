@@ -32,6 +32,7 @@
     "src",
     "scripts",
     "contracts",
+    "contracts-evm",
     "zkapp",
     "dist-zkapp",
     "docs",
@@ -48,7 +49,9 @@
   "scripts": {
     "start": "pnpm evm:facilitator",
     "test": "node --test test/*.test.mjs",
+    "build:evm-contracts": "node --enable-source-maps scripts/compile-evm-contracts.mjs",
     "build:zkapp": "tsc -p tsconfig.zkapp.json",
+    "deploy:base-sepolia-escrow": "node --env-file-if-exists=.env --enable-source-maps scripts/deploy-base-sepolia-escrow.mjs",
     "key-manager": "node --enable-source-maps scripts/key-manager.mjs",
     "doctor:rails": "pnpm build:zkapp && node --env-file-if-exists=.env --enable-source-maps scripts/doctor.mjs",
     "doctor:ethereum": "pnpm build:zkapp && env X402_EVM_NETWORK=ethereum node --env-file-if-exists=.env --enable-source-maps scripts/doctor.mjs",
@@ -56,6 +59,7 @@
     "zkapp:deploy": "pnpm build:zkapp && node --env-file-if-exists=.env --enable-source-maps dist-zkapp/zkapp/deploy.js",
     "zkapp:get-state": "pnpm build:zkapp && node --env-file-if-exists=.env --enable-source-maps dist-zkapp/zkapp/get-state.js",
     "smoke:evm-flow": "node --env-file-if-exists=.env --enable-source-maps scripts/smoke-evm-flow.mjs",
+    "smoke:base-sepolia-reserve-release": "node --env-file-if-exists=.env --enable-source-maps scripts/smoke-base-sepolia-reserve-release.mjs",
     "smoke:ethereum-flow": "env X402_EVM_NETWORK=ethereum node --env-file-if-exists=.env --enable-source-maps scripts/smoke-evm-flow.mjs",
     "smoke:multirail-offer": "pnpm build:zkapp && node --env-file-if-exists=.env --enable-source-maps scripts/smoke-multirail-offer.mjs",
     "smoke:zeko-flow": "pnpm build:zkapp && node --env-file-if-exists=.env --enable-source-maps scripts/smoke-zeko-flow.mjs",
@@ -69,7 +73,11 @@
     "viem": "^2.48.4"
   },
   "devDependencies": {
+    "@openzeppelin/contracts": "^5.6.1",
     "@types/node": "^22.10.2",
+    "ethers": "^6.16.0",
+    "ganache": "^7.9.2",
+    "solc": "^0.8.34",
     "typescript": "^5.7.3"
   }
 }

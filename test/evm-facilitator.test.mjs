@@ -4,8 +4,11 @@ import test from "node:test";
 
 import {
   SelfHostedEvmFacilitator,
+  X402_RESERVE_RELEASE_ESCROW_ABI,
   buildBaseMainnetUsdcRail,
+  buildBaseMainnetUsdcReserveReleaseRail,
   buildBaseUsdcExactEip3009Intent,
+  buildBaseUsdcReserveReleaseIntent,
   buildEthereumMainnetUsdcExactEip3009Intent,
   buildEthereumMainnetUsdcRail,
   buildPaymentPayload,
@@ -13,6 +16,7 @@ import {
   buildSignedEvmAuthorization,
   createSelfHostedEvmFacilitatorHttpServer
 } from "../src/index.js";
+import { encodeErrorResult } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 const BUYER_PRIVATE_KEY =
@@ -176,6 +180,132 @@ test("self-hosted facilitator supports Ethereum mainnet with the same EIP-3009 f
 
   assert.equal(verification.isValid, true);
   assert.equal(verification.network, "eip155:1");
+});
+
+test("self-hosted facilitator can reserve Base USDC into a reserve-release escrow contract", async () => {
+  const mock = createMockClients();
+  const rail = buildBaseMainnetUsdcReserveReleaseRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    amount: "0.50",
+    escrowContract: "0x9999999999999999999999999999999999999999"
+  });
+  const intent = buildBaseUsdcReserveReleaseIntent({
+    from: privateKeyToAccount(BUYER_PRIVATE_KEY).address,
+    payTo: rail.payTo,
+    escrowContract: "0x9999999999999999999999999999999999999999",
+    requestId: "req_self_hosted_reserve",
+    paymentId: "pay_self_hosted_reserve",
+    amount: rail.amount,
+    resultDigest: "proof_result_digest_demo"
+  });
+  const { requirements, payload } = await buildSignedPayment({
+    rail,
+    intent,
+    paymentId: "pay_self_hosted_reserve"
+  });
+  const facilitator = new SelfHostedEvmFacilitator({
+    networks: [
+      {
+        networkId: "eip155:8453",
+        rpcUrl: "https://base.example",
+        relayerPrivateKey: RELAYER_PRIVATE_KEY,
+        publicClient: mock.publicClient,
+        walletClient: mock.walletClient
+      }
+    ]
+  });
+
+  const settlement = await facilitator.settle({
+    paymentPayload: payload,
+    paymentRequirements: requirements
+  });
+
+  assert.equal(settlement.success, true);
+  assert.equal(settlement.settlementModel, "x402-base-usdc-reserve-release-v2");
+  assert.equal(
+    mock.calls.some((entry) => entry[0] === "writeContract" && entry[1] === "reserveExactWithAuthorization"),
+    true
+  );
+});
+
+test("self-hosted facilitator surfaces decoded escrow custom errors on settlement failure", async () => {
+  const mock = createMockClients();
+  mock.walletClient.writeContract = async () => {
+    const revertData = encodeErrorResult({
+      abi: X402_RESERVE_RELEASE_ESCROW_ABI,
+      errorName: "ReservationExpired",
+      args: ["0x" + "11".repeat(32), 1234567890n]
+    });
+    const error = new Error("execution reverted");
+    error.data = revertData;
+    throw error;
+  };
+
+  const rail = buildBaseMainnetUsdcReserveReleaseRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    amount: "0.50",
+    escrowContract: "0x9999999999999999999999999999999999999999"
+  });
+  const intent = buildBaseUsdcReserveReleaseIntent({
+    from: privateKeyToAccount(BUYER_PRIVATE_KEY).address,
+    payTo: rail.payTo,
+    escrowContract: "0x9999999999999999999999999999999999999999",
+    requestId: "req_self_hosted_expired",
+    paymentId: "pay_self_hosted_expired",
+    amount: rail.amount,
+    resultDigest: "proof_result_digest_expired"
+  });
+  const { requirements, payload } = await buildSignedPayment({
+    rail,
+    intent,
+    paymentId: "pay_self_hosted_expired"
+  });
+  const facilitator = new SelfHostedEvmFacilitator({
+    networks: [
+      {
+        networkId: "eip155:8453",
+        rpcUrl: "https://base.example",
+        relayerPrivateKey: RELAYER_PRIVATE_KEY,
+        publicClient: mock.publicClient,
+        walletClient: mock.walletClient
+      }
+    ]
+  });
+
+  const settlement = await facilitator.settle({
+    paymentPayload: payload,
+    paymentRequirements: requirements
+  });
+
+  assert.equal(settlement.success, false);
+  assert.equal(settlement.errorCode, "contract_revert");
+  assert.equal(settlement.errorName, "ReservationExpired");
+  assert.deepEqual(settlement.errorArgs, ["0x" + "11".repeat(32), "1234567890"]);
+  assert.match(settlement.errorReason, /ReservationExpired/);
+});
+
+test("self-hosted facilitator reports configured RPC failover URLs", async () => {
+  const mock = createMockClients();
+  const facilitator = new SelfHostedEvmFacilitator({
+    networks: [
+      {
+        networkId: "eip155:8453",
+        rpcUrl: "https://base-primary.example",
+        rpcUrls: ["https://base-primary.example", "https://base-secondary.example"],
+        relayerPrivateKey: RELAYER_PRIVATE_KEY,
+        publicClient: mock.publicClient,
+        walletClient: mock.walletClient
+      }
+    ]
+  });
+
+  const supported = await facilitator.supported();
+  assert.equal(supported.ok, true);
+  assert.deepEqual(supported.networks[0].rpcUrls, [
+    "https://base-primary.example",
+    "https://base-secondary.example"
+  ]);
+  assert.equal(supported.networks[0].rpcUrl, "https://base-primary.example");
 });
 
 test("self-hosted facilitator HTTP server exposes supported, verify, and settle routes", async (t) => {
