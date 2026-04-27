@@ -40,6 +40,7 @@ export function buildSignedEvmAuthorization(intent, input) {
     facilitator: intent.facilitator ?? null,
     typedData: intent.typedData,
     signature,
+    ...(isRecord(intent.settlement) ? { settlement: intent.settlement } : {}),
     ...(isRecord(intent.paymentPayloadShape) ? { paymentPayloadShape: intent.paymentPayloadShape } : {})
   };
 }

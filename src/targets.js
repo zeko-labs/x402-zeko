@@ -67,6 +67,45 @@ function buildExactEip3009Rail(target, input) {
   });
 }
 
+function buildReserveReleaseRail(target, input) {
+  if (typeof input?.escrowContract !== "string" || input.escrowContract.length === 0) {
+    throw new Error("escrowContract is required for the reserve-release rail.");
+  }
+
+  return buildEvmRail({
+    networkId: target.networkId,
+    amount: input.amount,
+    assetSymbol: target.asset.symbol,
+    decimals: target.asset.decimals,
+    assetStandard: target.asset.standard,
+    tokenAddress: target.asset.address,
+    payTo: input.payTo,
+    transferMethod: "eip3009",
+    settlementModel: input.settlementModel ?? "x402-base-usdc-reserve-release-v2",
+    description: input.description,
+    facilitatorMode: input.facilitatorMode ?? "evm-reserve-release",
+    extensions: {
+      evm: {
+        chainId: target.chainId,
+        chainName: target.chainName,
+        eip712Name: target.eip712Name,
+        assetVersion: input.assetVersion ?? "2",
+        transferMethod: target.transferMethod,
+        facilitatorUrl: input.facilitatorUrl ?? null,
+        reserveRelease: {
+          escrowContract: input.escrowContract,
+          reserveMethod: input.reserveMethod ?? "reserveExactWithAuthorization",
+          releaseMethod: input.releaseMethod ?? "releaseReservedPayment",
+          refundMethod: input.refundMethod ?? "refundExpiredPayment",
+          resultCommitmentType: input.resultCommitmentType ?? "sha256-canonical",
+          ...(typeof input.expirySeconds === "number" ? { expirySeconds: input.expirySeconds } : {})
+        },
+        ...(typeof input.maxTimeoutSeconds === "number" ? { maxTimeoutSeconds: input.maxTimeoutSeconds } : {})
+      }
+    }
+  });
+}
+
 export function buildZekoSettlementContractRail(input) {
   if (typeof input?.contractAddress !== "string" || input.contractAddress.length === 0) {
     throw new Error("contractAddress is required for the Zeko settlement contract rail.");
@@ -118,6 +157,20 @@ export function buildBaseMainnetUsdcRail(input) {
       input.description ??
       "Base mainnet USDC rail using x402 exact EIP-3009 settlement.",
     defaultFacilitator: input.defaultFacilitator ?? "cdp"
+  });
+}
+
+export function buildBaseMainnetUsdcReserveReleaseRail(input) {
+  if (typeof input?.payTo !== "string" || input.payTo.length === 0) {
+    throw new Error("payTo is required for the Base USDC reserve-release rail.");
+  }
+
+  return buildReserveReleaseRail(BASE_MAINNET_USDC, {
+    ...input,
+    description:
+      input.description ??
+      "Base mainnet USDC rail using reserve-now, release-on-proof settlement.",
+    defaultFacilitator: input.defaultFacilitator ?? "self-hosted"
   });
 }
 

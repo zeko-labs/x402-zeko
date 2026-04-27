@@ -5,7 +5,9 @@ import {
   CDPFacilitatorClient,
   ETHEREUM_MAINNET_USDC,
   buildBaseMainnetUsdcRail,
+  buildBaseMainnetUsdcReserveReleaseRail,
   buildBaseUsdcExactEip3009Intent,
+  buildBaseUsdcReserveReleaseIntent,
   buildEthereumMainnetUsdcExactEip3009Intent,
   buildEthereumMainnetUsdcRail,
   buildHostedFacilitatorRequest,
@@ -108,6 +110,44 @@ test("maps internal Base x402 payloads into hosted facilitator request shape", (
     "0x1111111111111111111111111111111111111111"
   );
   assert.equal(request.paymentPayload.resource.url, requirements.resource);
+});
+
+test("maps reserve-release Base payloads into hosted facilitator request shape with escrow metadata", () => {
+  const rail = buildBaseMainnetUsdcReserveReleaseRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    amount: "0.50",
+    escrowContract: "0x9999999999999999999999999999999999999999",
+    expirySeconds: 1800
+  });
+  const intent = buildBaseUsdcReserveReleaseIntent({
+    from: "0x1111111111111111111111111111111111111111",
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    escrowContract: "0x9999999999999999999999999999999999999999",
+    requestId: "req_demo_reserve",
+    paymentId: "pay_demo_reserve",
+    amount: "0.50",
+    resultDigest: "proof_result_digest_demo"
+  });
+  const { requirements, payload } = buildSignedPayload({
+    rail,
+    intent,
+    payer: "0x1111111111111111111111111111111111111111",
+    paymentId: "pay_demo_reserve"
+  });
+  const request = buildHostedFacilitatorRequest({
+    paymentRequirements: requirements,
+    paymentPayload: payload
+  });
+
+  assert.equal(request.paymentPayload.accepted.extra.settlementModel, "x402-base-usdc-reserve-release-v2");
+  assert.equal(
+    request.paymentPayload.accepted.extra.reserveRelease.escrowContract,
+    "0x9999999999999999999999999999999999999999"
+  );
+  assert.equal(
+    request.paymentPayload.payload.settlement.contractAddress,
+    "0x9999999999999999999999999999999999999999"
+  );
 });
 
 test("uses the CDP facilitator client for Base-style hosted verify/settle flows", async () => {

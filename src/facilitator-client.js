@@ -133,6 +133,26 @@ function toHostedExactOption(option) {
     throw new Error("Hosted facilitator integration requires an ERC-20 token address.");
   }
 
+  const extra = {
+    name: option?.extensions?.evm?.eip712Name ?? option.asset.symbol,
+    version: option?.extensions?.evm?.assetVersion ?? "2",
+    ...(typeof option?.settlementModel === "string" ? { settlementModel: option.settlementModel } : {})
+  };
+  const reserveRelease = option?.extensions?.evm?.reserveRelease;
+
+  if (isRecord(reserveRelease)) {
+    extra.reserveRelease = {
+      escrowContract: reserveRelease.escrowContract,
+      reserveMethod: reserveRelease.reserveMethod,
+      releaseMethod: reserveRelease.releaseMethod,
+      refundMethod: reserveRelease.refundMethod,
+      resultCommitmentType: reserveRelease.resultCommitmentType,
+      ...(typeof reserveRelease.expirySeconds === "number"
+        ? { expirySeconds: reserveRelease.expirySeconds }
+        : {})
+    };
+  }
+
   return {
     scheme: option.scheme,
     network: option.network,
@@ -140,10 +160,7 @@ function toHostedExactOption(option) {
     amount: toAtomicUnits(amount, option.asset.decimals).toString(),
     payTo: option.payTo,
     maxTimeoutSeconds: option?.extensions?.evm?.maxTimeoutSeconds ?? 60,
-    extra: {
-      name: option?.extensions?.evm?.eip712Name ?? option.asset.symbol,
-      version: option?.extensions?.evm?.assetVersion ?? "2"
-    }
+    extra
   };
 }
 
@@ -164,7 +181,9 @@ export function buildHostedFacilitatorRequest(input) {
       accepted,
       payload: {
         signature: authorization.signature,
-        authorization: authorization.typedData.message
+        authorization: authorization.typedData.message,
+        ...(isRecord(authorization.settlement) ? { settlement: authorization.settlement } : {}),
+        ...(typeof authorization.primitive === "string" ? { primitive: authorization.primitive } : {})
       },
       resource: {
         url: input?.paymentRequirements?.resource,

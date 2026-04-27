@@ -19,6 +19,17 @@ function randomNonceHex() {
   return `0x${randomBytes(32).toString("hex")}`;
 }
 
+function toBytes32Hex(value, label) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} is required.`);
+  }
+
+  const normalized = value.startsWith("0x") ? value.slice(2) : value;
+  return /^[0-9a-fA-F]{64}$/.test(normalized)
+    ? `0x${normalized.toLowerCase()}`
+    : `0x${canonicalDigest({ [label]: value }).sha256Hex}`;
+}
+
 function transferWithAuthorizationTypes() {
   return {
     TransferWithAuthorization: [
@@ -30,6 +41,17 @@ function transferWithAuthorizationTypes() {
       { name: "nonce", type: "bytes32" }
     ]
   };
+}
+
+export function buildReserveReleaseResultCommitment(input) {
+  return `0x${canonicalDigest({
+    requestId: input?.requestId ?? null,
+    paymentId: input?.paymentId ?? null,
+    proofDigest: input?.proofDigest ?? null,
+    resultDigest: input?.resultDigest ?? null,
+    verifier: input?.verifier ?? null,
+    result: input?.result ?? null
+  }).sha256Hex}`;
 }
 
 function buildZekoSettlementMemo(input) {
@@ -248,6 +270,142 @@ export function buildEthereumMainnetUsdcExactEip3009Intent(input) {
     ...input,
     primitive: "evm-ethereum-mainnet-usdc-exact-eip3009-v1"
   });
+}
+
+export function buildBaseUsdcReserveReleaseIntent(input) {
+  if (typeof input?.from !== "string" || input.from.length === 0) {
+    throw new Error("from is required.");
+  }
+
+  if (typeof input?.payTo !== "string" || input.payTo.length === 0) {
+    throw new Error("payTo is required.");
+  }
+
+  if (typeof input?.escrowContract !== "string" || input.escrowContract.length === 0) {
+    throw new Error("escrowContract is required.");
+  }
+
+  if (typeof input?.requestId !== "string" || input.requestId.length === 0) {
+    throw new Error("requestId is required.");
+  }
+
+  if (typeof input?.paymentId !== "string" || input.paymentId.length === 0) {
+    throw new Error("paymentId is required.");
+  }
+
+  const amount = input.amount ?? "0.50";
+  const value = toAtomicUnits(amount, BASE_MAINNET_USDC.asset.decimals).toString();
+  const validBeforeUnix =
+    input.validBeforeUnix ??
+    String(Math.floor(Date.now() / 1000) + 60 * 60);
+  const nonce = input.nonce ?? randomNonceHex();
+  const requestIdHash = toBytes32Hex(input.requestIdHash ?? input.requestId, "requestIdHash");
+  const paymentIdHash = toBytes32Hex(input.paymentIdHash ?? input.paymentId, "paymentIdHash");
+  const resultCommitment = toBytes32Hex(
+    input.resultCommitment ??
+      buildReserveReleaseResultCommitment({
+        requestId: input.requestId,
+        paymentId: input.paymentId,
+        proofDigest: input.proofDigest,
+        resultDigest: input.resultDigest,
+        verifier: input.verifier,
+        result: input.result
+      }),
+    "resultCommitment"
+  );
+  const reserveExpiryUnix =
+    input.reserveExpiryUnix ??
+    String(Math.floor(Date.now() / 1000) + (input.expirySeconds ?? 60 * 60));
+
+  return {
+    primitive: "evm-base-usdc-reserve-release-v2",
+    settlementRail: "evm",
+    network: {
+      networkId: BASE_MAINNET_USDC.networkId,
+      chainId: BASE_MAINNET_USDC.chainId,
+      chainName: BASE_MAINNET_USDC.chainName
+    },
+    asset: BASE_MAINNET_USDC.asset,
+    transferMethod: "EIP-3009",
+    facilitator: {
+      kind: "evm-reserve-release",
+      url: input.facilitatorUrl ?? null
+    },
+    typedData: {
+      domain: {
+        name: BASE_MAINNET_USDC.eip712Name,
+        version: input.domainVersion ?? "2",
+        chainId: BASE_MAINNET_USDC.chainId,
+        verifyingContract: BASE_MAINNET_USDC.asset.address
+      },
+      primaryType: "TransferWithAuthorization",
+      types: transferWithAuthorizationTypes(),
+      message: {
+        from: input.from,
+        to: input.escrowContract,
+        value,
+        validAfter: String(input.validAfterUnix ?? 0),
+        validBefore: validBeforeUnix,
+        nonce
+      }
+    },
+    settlement: {
+      mode: "reserve-release-v2",
+      contractAddress: input.escrowContract,
+      tokenAddress: BASE_MAINNET_USDC.asset.address,
+      payTo: input.payTo,
+      requestIdHash,
+      paymentIdHash,
+      resultCommitment,
+      reserveExpiryUnix: String(reserveExpiryUnix),
+      reserveMethod: input.reserveMethod ?? "reserveExactWithAuthorization",
+      releaseMethod: input.releaseMethod ?? "releaseReservedPayment",
+      refundMethod: input.refundMethod ?? "refundExpiredPayment"
+    }
+  };
+}
+
+export function buildBaseUsdcReleaseReservationCall(input) {
+  if (typeof input?.escrowContract !== "string" || input.escrowContract.length === 0) {
+    throw new Error("escrowContract is required.");
+  }
+
+  return {
+    primitive: "evm-base-usdc-reserve-release-call-v2",
+    network: {
+      networkId: BASE_MAINNET_USDC.networkId,
+      chainId: BASE_MAINNET_USDC.chainId,
+      chainName: BASE_MAINNET_USDC.chainName
+    },
+    contractAddress: input.escrowContract,
+    functionName: input?.releaseMethod ?? "releaseReservedPayment",
+    args: [
+      toBytes32Hex(input?.requestIdHash ?? input?.requestId, "requestIdHash"),
+      toBytes32Hex(input?.paymentIdHash ?? input?.paymentId, "paymentIdHash"),
+      toBytes32Hex(input?.resultCommitment, "resultCommitment")
+    ]
+  };
+}
+
+export function buildBaseUsdcRefundReservationCall(input) {
+  if (typeof input?.escrowContract !== "string" || input.escrowContract.length === 0) {
+    throw new Error("escrowContract is required.");
+  }
+
+  return {
+    primitive: "evm-base-usdc-refund-reservation-call-v2",
+    network: {
+      networkId: BASE_MAINNET_USDC.networkId,
+      chainId: BASE_MAINNET_USDC.chainId,
+      chainName: BASE_MAINNET_USDC.chainName
+    },
+    contractAddress: input.escrowContract,
+    functionName: input?.refundMethod ?? "refundExpiredPayment",
+    args: [
+      toBytes32Hex(input?.requestIdHash ?? input?.requestId, "requestIdHash"),
+      toBytes32Hex(input?.paymentIdHash ?? input?.paymentId, "paymentIdHash")
+    ]
+  };
 }
 
 export function buildBaseUsdcCircleGatewayIntent(input) {

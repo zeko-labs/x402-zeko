@@ -15,8 +15,13 @@ import {
   buildAuthorizationDigest,
   buildCircleGatewayBaseUsdcRail,
   buildBaseMainnetUsdcRail,
+  buildBaseMainnetUsdcReserveReleaseRail,
   buildBaseUsdcCircleGatewayIntent,
   buildBaseUsdcExactEip3009Intent,
+  buildBaseUsdcRefundReservationCall,
+  buildBaseUsdcReleaseReservationCall,
+  buildBaseUsdcReserveReleaseIntent,
+  buildReserveReleaseResultCommitment,
   buildCatalog,
   buildPaymentContextDigest,
   buildPaymentRequired,
@@ -274,6 +279,52 @@ test("builds concrete settlement intents for the chosen Zeko and Base targets", 
   assert.equal(evmGateway.primitive, "evm-base-usdc-circle-gateway-v1");
   assert.equal(evmGateway.typedData.domain.name, "GatewayWalletBatched");
   assert.equal(evmGateway.paymentPayloadShape.payload.authorization.nonce, evmGateway.typedData.message.nonce);
+
+  const reserveRail = buildBaseMainnetUsdcReserveReleaseRail({
+    amount: "0.50",
+    payTo: "0x1111111111111111111111111111111111111111",
+    escrowContract: "0x9999999999999999999999999999999999999999",
+    expirySeconds: 3600
+  });
+  assert.equal(reserveRail.settlementModel, "x402-base-usdc-reserve-release-v2");
+  assert.equal(reserveRail.extensions.evm.reserveRelease.escrowContract, "0x9999999999999999999999999999999999999999");
+
+  const reserveIntent = buildBaseUsdcReserveReleaseIntent({
+    from: "0x2222222222222222222222222222222222222222",
+    payTo: "0x1111111111111111111111111111111111111111",
+    escrowContract: "0x9999999999999999999999999999999999999999",
+    requestId: "req_demo_escrow",
+    paymentId: "pay_demo_escrow",
+    amount: "0.50",
+    resultDigest: "proof_result_digest_demo",
+    nonce: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  });
+  assert.equal(reserveIntent.primitive, "evm-base-usdc-reserve-release-v2");
+  assert.equal(reserveIntent.typedData.message.to, "0x9999999999999999999999999999999999999999");
+  assert.equal(reserveIntent.settlement.mode, "reserve-release-v2");
+  assert.match(reserveIntent.settlement.requestIdHash, /^0x[0-9a-f]{64}$/);
+  assert.match(reserveIntent.settlement.resultCommitment, /^0x[0-9a-f]{64}$/);
+
+  const releaseCall = buildBaseUsdcReleaseReservationCall({
+    escrowContract: "0x9999999999999999999999999999999999999999",
+    requestId: "req_demo_escrow",
+    paymentId: "pay_demo_escrow",
+    resultCommitment: buildReserveReleaseResultCommitment({
+      requestId: "req_demo_escrow",
+      paymentId: "pay_demo_escrow",
+      resultDigest: "proof_result_digest_demo"
+    })
+  });
+  assert.equal(releaseCall.functionName, "releaseReservedPayment");
+  assert.equal(releaseCall.args.length, 3);
+
+  const refundCall = buildBaseUsdcRefundReservationCall({
+    escrowContract: "0x9999999999999999999999999999999999999999",
+    requestId: "req_demo_escrow",
+    paymentId: "pay_demo_escrow"
+  });
+  assert.equal(refundCall.functionName, "refundExpiredPayment");
+  assert.equal(refundCall.args.length, 2);
 });
 
 test("offers a Circle Gateway-flavored Base rail when batching is desired", () => {
@@ -349,6 +400,70 @@ test("builds signed payment payloads and talks to an HTTP facilitator", async ()
   assert.equal(calls[0].url, "https://facilitator.example/verify");
   assert.equal(calls[0].body.paymentPayload.authorization.signature, "0xsignedauthorization");
   assert.equal(calls[0].body.paymentRequirements.accepts[0].description, undefined);
+  assert.equal(calls[0].body.paymentPayload.authorization.settlement, undefined);
+});
+
+test("preserves reserve-release settlement metadata when talking to an HTTP facilitator", async () => {
+  const rail = buildBaseMainnetUsdcReserveReleaseRail({
+    amount: "0.50",
+    payTo: "0x1111111111111111111111111111111111111111",
+    escrowContract: "0x9999999999999999999999999999999999999999"
+  });
+  const required = buildPaymentRequired({
+    ...sampleContext(),
+    rails: [rail]
+  });
+  const option = required.accepts[0];
+  const intent = buildBaseUsdcReserveReleaseIntent({
+    from: "0x2222222222222222222222222222222222222222",
+    payTo: rail.payTo,
+    escrowContract: "0x9999999999999999999999999999999999999999",
+    requestId: required.requestId,
+    paymentId: "pay_demo_reserve_http",
+    amount: rail.amount,
+    resultDigest: "proof_result_digest_demo"
+  });
+  const authorization = buildSignedEvmAuthorization(intent, {
+    signature: "0xsignedreserveauthorization"
+  });
+  const payload = buildSignedPaymentPayload({
+    requestId: required.requestId,
+    paymentId: "pay_demo_reserve_http",
+    option,
+    payer: "0x2222222222222222222222222222222222222222",
+    sessionId: "session_demo",
+    turnId: "turn_001",
+    authorization
+  });
+  const calls = [];
+  const facilitator = new HTTPFacilitatorClient({
+    baseUrl: "https://facilitator.example",
+    fetchImpl: async (url, init) => {
+      calls.push({
+        url,
+        body: JSON.parse(init.body)
+      });
+      const responseBody = url.endsWith("/verify")
+        ? { ok: true, isValid: true }
+        : { ok: true, settled: true, txHash: "0xsettledreserve" };
+      return new Response(JSON.stringify(responseBody), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    }
+  });
+
+  const result = await facilitator.verifyAndSettle({
+    paymentPayload: payload,
+    paymentRequirements: required
+  });
+
+  assert.equal(result.settlement.txHash, "0xsettledreserve");
+  assert.equal(
+    calls[0].body.paymentPayload.authorization.settlement.contractAddress,
+    "0x9999999999999999999999999999999999999999"
+  );
+  assert.equal(calls[0].body.paymentRequirements.accepts[0].settlementModel, "x402-base-usdc-reserve-release-v2");
 });
 
 test("submits signed Zeko native payments and signed zkapp commands", async () => {

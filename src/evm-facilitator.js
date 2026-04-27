@@ -3,12 +3,14 @@ import { createServer } from "node:http";
 import {
   createPublicClient,
   createWalletClient,
+  decodeErrorResult,
+  fallback,
   http,
   parseSignature,
   verifyTypedData
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { base, mainnet } from "viem/chains";
+import { base, baseSepolia, mainnet } from "viem/chains";
 
 import { buildHostedFacilitatorRequest } from "./facilitator-client.js";
 
@@ -26,6 +28,27 @@ function assertNonEmptyString(label, value) {
 
 function normalizePrivateKey(value) {
   return value.startsWith("0x") ? value : `0x${value}`;
+}
+
+function isHexData(value) {
+  return typeof value === "string" && /^0x[0-9a-fA-F]+$/.test(value) && value.length >= 10;
+}
+
+function normalizeRpcUrls(config) {
+  const fromArray = Array.isArray(config?.rpcUrls)
+    ? config.rpcUrls.filter((value) => typeof value === "string" && value.length > 0)
+    : [];
+  const fromScalar =
+    typeof config?.rpcUrl === "string" && config.rpcUrl.length > 0
+      ? [config.rpcUrl]
+      : [];
+  const rpcUrls = [...new Set([...fromArray, ...fromScalar])];
+
+  if (rpcUrls.length === 0) {
+    throw new Error("rpcUrl or rpcUrls is required.");
+  }
+
+  return rpcUrls;
 }
 
 function parseChainId(networkId) {
@@ -46,6 +69,10 @@ function parseChainId(networkId) {
 function getChain(networkId) {
   if (networkId === "eip155:8453") {
     return base;
+  }
+
+  if (networkId === "eip155:84532") {
+    return baseSepolia;
   }
 
   if (networkId === "eip155:1") {
@@ -105,6 +132,222 @@ export const USDC_EIP3009_ABI = [
   }
 ];
 
+export const X402_RESERVE_RELEASE_ESCROW_ABI = [
+  {
+    type: "error",
+    name: "Error",
+    inputs: [{ name: "message", type: "string" }]
+  },
+  {
+    type: "error",
+    name: "Panic",
+    inputs: [{ name: "code", type: "uint256" }]
+  },
+  {
+    type: "error",
+    name: "AccessControlUnauthorizedAccount",
+    inputs: [
+      { name: "account", type: "address" },
+      { name: "neededRole", type: "bytes32" }
+    ]
+  },
+  {
+    type: "error",
+    name: "EnforcedPause",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "SafeERC20FailedOperation",
+    inputs: [{ name: "token", type: "address" }]
+  },
+  {
+    type: "error",
+    name: "InvalidToken",
+    inputs: [{ name: "token", type: "address" }]
+  },
+  {
+    type: "error",
+    name: "ReservationAlreadyExists",
+    inputs: [{ name: "reservationKey", type: "bytes32" }]
+  },
+  {
+    type: "error",
+    name: "ReservationMissing",
+    inputs: [{ name: "reservationKey", type: "bytes32" }]
+  },
+  {
+    type: "error",
+    name: "ReservationNotReleasable",
+    inputs: [{ name: "reservationKey", type: "bytes32" }]
+  },
+  {
+    type: "error",
+    name: "ReservationNotRefundable",
+    inputs: [{ name: "reservationKey", type: "bytes32" }]
+  },
+  {
+    type: "error",
+    name: "ReservationExpired",
+    inputs: [
+      { name: "reservationKey", type: "bytes32" },
+      { name: "expiry", type: "uint256" }
+    ]
+  },
+  {
+    type: "error",
+    name: "ResultCommitmentMismatch",
+    inputs: [{ name: "reservationKey", type: "bytes32" }]
+  },
+  {
+    type: "error",
+    name: "InvalidReservationData",
+    inputs: []
+  },
+  {
+    type: "function",
+    stateMutability: "nonpayable",
+    name: "reserveExactWithAuthorization",
+    inputs: [
+      { name: "requestIdHash", type: "bytes32" },
+      { name: "paymentIdHash", type: "bytes32" },
+      { name: "payer", type: "address" },
+      { name: "payTo", type: "address" },
+      { name: "token", type: "address" },
+      { name: "amount", type: "uint256" },
+      { name: "validAfter", type: "uint256" },
+      { name: "validBefore", type: "uint256" },
+      { name: "nonce", type: "bytes32" },
+      { name: "resultCommitment", type: "bytes32" },
+      { name: "expiry", type: "uint256" },
+      { name: "v", type: "uint8" },
+      { name: "r", type: "bytes32" },
+      { name: "s", type: "bytes32" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    stateMutability: "nonpayable",
+    name: "releaseReservedPayment",
+    inputs: [
+      { name: "requestIdHash", type: "bytes32" },
+      { name: "paymentIdHash", type: "bytes32" },
+      { name: "resultCommitment", type: "bytes32" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    stateMutability: "nonpayable",
+    name: "refundExpiredPayment",
+    inputs: [
+      { name: "requestIdHash", type: "bytes32" },
+      { name: "paymentIdHash", type: "bytes32" }
+    ],
+    outputs: []
+  }
+];
+
+function formatDecodedArg(value) {
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => formatDecodedArg(entry));
+  }
+
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, formatDecodedArg(entry)])
+    );
+  }
+
+  return value;
+}
+
+function extractErrorData(error, visited = new Set()) {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+
+  if (visited.has(error)) {
+    return null;
+  }
+  visited.add(error);
+
+  if (isHexData(error.data)) {
+    return error.data;
+  }
+
+  if (isRecord(error.data)) {
+    const nested = extractErrorData(error.data, visited);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  if (isRecord(error.error)) {
+    const nested = extractErrorData(error.error, visited);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  if (isRecord(error.cause)) {
+    const nested = extractErrorData(error.cause, visited);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
+function decodeKnownExecutionError(error) {
+  const data = extractErrorData(error);
+
+  if (!data) {
+    return null;
+  }
+
+  try {
+    const decoded = decodeErrorResult({
+      abi: X402_RESERVE_RELEASE_ESCROW_ABI,
+      data
+    });
+    const args = Array.isArray(decoded.args)
+      ? decoded.args.map((entry) => formatDecodedArg(entry))
+      : [];
+    const reason =
+      decoded.errorName === "Error" && typeof args[0] === "string"
+        ? args[0]
+        : decoded.errorName === "Panic"
+          ? `Solidity panic: ${args[0]}`
+          : args.length > 0
+            ? `${decoded.errorName}(${args.map((entry) => JSON.stringify(entry)).join(", ")})`
+            : decoded.errorName;
+
+    return {
+      errorCode: "contract_revert",
+      errorName: decoded.errorName,
+      errorArgs: args,
+      revertData: data,
+      reason
+    };
+  } catch {
+    return {
+      errorCode: "contract_revert",
+      revertData: data
+    };
+  }
+}
+
+function isBytes32Hex(value) {
+  return typeof value === "string" && /^0x[0-9a-fA-F]{64}$/.test(value);
+}
+
 function normalizeHostedRequest(input) {
   if (
     isRecord(input?.paymentPayload) &&
@@ -155,9 +398,80 @@ function normalizeHostedExactPayment(input) {
   const validBefore = BigInt(assertNonEmptyString("authorization.validBefore", authorization.validBefore));
   const nonce = assertNonEmptyString("authorization.nonce", authorization.nonce);
   const acceptedAmount = BigInt(assertNonEmptyString("paymentPayload.accepted.amount", accepted.amount));
+  const settlementModel =
+    typeof accepted?.extra?.settlementModel === "string" ? accepted.extra.settlementModel : null;
+  const settlement = isRecord(payload?.settlement) ? payload.settlement : null;
+  const reserveReleaseConfig = isRecord(accepted?.extra?.reserveRelease)
+    ? accepted.extra.reserveRelease
+    : null;
+  const reserveRelease =
+    settlementModel === "x402-base-usdc-reserve-release-v2" || settlement?.mode === "reserve-release-v2"
+      ? {
+          contractAddress: assertNonEmptyString(
+            "paymentPayload.payload.settlement.contractAddress",
+            settlement?.contractAddress ?? reserveReleaseConfig?.escrowContract
+          ),
+          requestIdHash: (() => {
+            const value = assertNonEmptyString(
+              "paymentPayload.payload.settlement.requestIdHash",
+              settlement?.requestIdHash
+            );
+            if (!isBytes32Hex(value)) {
+              throw new Error("paymentPayload.payload.settlement.requestIdHash must be bytes32 hex.");
+            }
+            return value;
+          })(),
+          paymentIdHash: (() => {
+            const value = assertNonEmptyString(
+              "paymentPayload.payload.settlement.paymentIdHash",
+              settlement?.paymentIdHash
+            );
+            if (!isBytes32Hex(value)) {
+              throw new Error("paymentPayload.payload.settlement.paymentIdHash must be bytes32 hex.");
+            }
+            return value;
+          })(),
+          resultCommitment: (() => {
+            const value = assertNonEmptyString(
+              "paymentPayload.payload.settlement.resultCommitment",
+              settlement?.resultCommitment
+            );
+            if (!isBytes32Hex(value)) {
+              throw new Error("paymentPayload.payload.settlement.resultCommitment must be bytes32 hex.");
+            }
+            return value;
+          })(),
+          reserveExpiryUnix: BigInt(
+            assertNonEmptyString(
+              "paymentPayload.payload.settlement.reserveExpiryUnix",
+              settlement?.reserveExpiryUnix ??
+                (typeof reserveReleaseConfig?.expirySeconds === "number"
+                  ? String(Math.floor(Date.now() / 1000) + reserveReleaseConfig.expirySeconds)
+                  : "")
+            )
+          ),
+          reserveMethod:
+            settlement?.reserveMethod ??
+            reserveReleaseConfig?.reserveMethod ??
+            "reserveExactWithAuthorization",
+          releaseMethod:
+            settlement?.releaseMethod ??
+            reserveReleaseConfig?.releaseMethod ??
+            "releaseReservedPayment",
+          refundMethod:
+            settlement?.refundMethod ??
+            reserveReleaseConfig?.refundMethod ??
+            "refundExpiredPayment"
+        }
+      : null;
+  const authorizationTarget = reserveRelease?.contractAddress ?? payTo;
 
-  if (to.toLowerCase() !== payTo.toLowerCase()) {
-    throw new Error("Hosted payment authorization.to must match paymentPayload.accepted.payTo.");
+  if (to.toLowerCase() !== authorizationTarget.toLowerCase()) {
+    throw new Error(
+      reserveRelease
+        ? "Hosted reserve-release authorization.to must match the configured escrow contract."
+        : "Hosted payment authorization.to must match paymentPayload.accepted.payTo."
+    );
   }
 
   if (value !== acceptedAmount) {
@@ -199,36 +513,44 @@ function normalizeHostedExactPayment(input) {
         validBefore: validBefore.toString(),
         nonce
       }
-    }
+    },
+    settlementModel,
+    reserveRelease
   };
 }
 
 function makeClients(config) {
   const networkId = assertNonEmptyString("networkId", config?.networkId);
-  const rpcUrl = assertNonEmptyString("rpcUrl", config?.rpcUrl);
+  const rpcUrls = normalizeRpcUrls(config);
+  const rpcUrl = rpcUrls[0];
   const relayerPrivateKey = normalizePrivateKey(
     assertNonEmptyString("relayerPrivateKey", config?.relayerPrivateKey)
   );
   const chain = getChain(networkId);
   const account = privateKeyToAccount(relayerPrivateKey);
+  const transport =
+    rpcUrls.length === 1
+      ? http(rpcUrl)
+      : fallback(rpcUrls.map((url) => http(url)));
   const publicClient =
     config?.publicClient ??
     createPublicClient({
       ...(chain ? { chain } : {}),
-      transport: http(rpcUrl)
+      transport
     });
   const walletClient =
     config?.walletClient ??
     createWalletClient({
       account,
       ...(chain ? { chain } : {}),
-      transport: http(rpcUrl)
+      transport
     });
 
   return {
     networkId,
     chain,
     rpcUrl,
+    rpcUrls,
     account,
     publicClient,
     walletClient
@@ -334,40 +656,75 @@ async function settleHostedPayment(clients, input) {
   const { v, r, s } = parseSignature(payment.signature);
 
   try {
-    const transactionHash = await clients.walletClient.writeContract({
-      account: clients.account,
-      chain: clients.chain,
-      address: payment.tokenAddress,
-      abi: USDC_EIP3009_ABI,
-      functionName: "transferWithAuthorization",
-      args: [
-        payment.authorization.from,
-        payment.authorization.to,
-        payment.authorization.value,
-        payment.authorization.validAfter,
-        payment.authorization.validBefore,
-        payment.authorization.nonce,
-        v,
-        r,
-        s
-      ]
-    });
+    const transactionHash = payment.reserveRelease
+      ? await clients.walletClient.writeContract({
+          account: clients.account,
+          chain: clients.chain,
+          address: payment.reserveRelease.contractAddress,
+          abi: X402_RESERVE_RELEASE_ESCROW_ABI,
+          functionName: payment.reserveRelease.reserveMethod,
+          args: [
+            payment.reserveRelease.requestIdHash,
+            payment.reserveRelease.paymentIdHash,
+            payment.authorization.from,
+            payment.payTo,
+            payment.tokenAddress,
+            payment.authorization.value,
+            payment.authorization.validAfter,
+            payment.authorization.validBefore,
+            payment.authorization.nonce,
+            payment.reserveRelease.resultCommitment,
+            payment.reserveRelease.reserveExpiryUnix,
+            v,
+            r,
+            s
+          ]
+        })
+      : await clients.walletClient.writeContract({
+          account: clients.account,
+          chain: clients.chain,
+          address: payment.tokenAddress,
+          abi: USDC_EIP3009_ABI,
+          functionName: "transferWithAuthorization",
+          args: [
+            payment.authorization.from,
+            payment.authorization.to,
+            payment.authorization.value,
+            payment.authorization.validAfter,
+            payment.authorization.validBefore,
+            payment.authorization.nonce,
+            v,
+            r,
+            s
+          ]
+        });
     const receipt =
       typeof clients.publicClient.waitForTransactionReceipt === "function"
         ? await clients.publicClient.waitForTransactionReceipt({ hash: transactionHash })
         : null;
 
-    return {
-      success: true,
-      network: payment.networkId,
-      payer: payment.payer,
-      payTo: payment.payTo,
-      relayer: clients.account.address,
-      transaction: transactionHash,
-      txHash: transactionHash,
-      transactionHash,
-      ...(receipt
-        ? {
+      return {
+        success: true,
+        network: payment.networkId,
+        payer: payment.payer,
+        payTo: payment.payTo,
+        relayer: clients.account.address,
+        settlementModel: payment.settlementModel ?? "x402-exact-evm-v1",
+        transaction: transactionHash,
+        txHash: transactionHash,
+        transactionHash,
+        ...(payment.reserveRelease
+          ? {
+              reserveRelease: {
+                contractAddress: payment.reserveRelease.contractAddress,
+                requestIdHash: payment.reserveRelease.requestIdHash,
+                paymentIdHash: payment.reserveRelease.paymentIdHash,
+                resultCommitment: payment.reserveRelease.resultCommitment
+              }
+            }
+          : {}),
+        ...(receipt
+          ? {
             receipt: {
               status: receipt.status,
               blockHash: receipt.blockHash,
@@ -381,14 +738,28 @@ async function settleHostedPayment(clients, input) {
     };
   } catch (error) {
     const authorizationUsed = await readAuthorizationState(clients, payment).catch(() => false);
-
-    return {
-      success: false,
-      errorReason: authorizationUsed
+    const decodedError = decodeKnownExecutionError(error);
+    const errorReason =
+      decodedError?.reason ??
+      (authorizationUsed
         ? "EIP-3009 authorization nonce was already used."
         : error instanceof Error
           ? error.message
-          : String(error),
+          : String(error));
+
+    return {
+      success: false,
+      errorReason,
+      ...(decodedError
+        ? {
+            errorCode: decodedError.errorCode,
+            errorName: decodedError.errorName,
+            errorArgs: decodedError.errorArgs,
+            revertData: decodedError.revertData
+          }
+        : authorizationUsed
+          ? { errorCode: "authorization_used" }
+          : { errorCode: "settlement_failed" }),
       verification: {
         ...verification,
         authorizationUsed
@@ -453,6 +824,7 @@ export class SelfHostedEvmFacilitator {
       networks: [...this.networks.values()].map((entry) => ({
         networkId: entry.networkId,
         rpcUrl: entry.rpcUrl,
+        rpcUrls: entry.rpcUrls,
         relayer: entry.account.address
       }))
     };
