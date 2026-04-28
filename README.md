@@ -52,7 +52,7 @@ That keeps the package honest about what is production-usable right now versus w
 - `src/ledger.js`: small in-memory settlement ledger with duplicate protection for any configured asset
 - `test/facilitator.test.mjs`: end-to-end happy-path coverage
 
-See `docs/settlement-primitives.md` for the current recommended Zeko and EVM settlement primitives, `docs/zeko-settlement-zkapp.md` for the contract/client boundary, `docs/testnet-smoke-flow.md` for the live Zeko testnet loop, `docs/evm-hosted-facilitators.md` for Base vs Ethereum hosted/self-hosted facilitator behavior, `docs/multirail-paid-resource.md` for the shared `402` offer that advertises EVM plus Zeko together, `docs/adapter-architecture.md` for the recommended boundary between this repo and a separate app-specific adapter, `docs/tenant-onboarding.md` for hosted tenant registration and shared-vs-dedicated escrow modes, and `docs/evm-reserve-release-v2.md` for the Base-first proof-gated reserve-release path.
+See `docs/settlement-primitives.md` for the current recommended Zeko and EVM settlement primitives, `docs/zeko-settlement-zkapp.md` for the contract/client boundary, `docs/testnet-smoke-flow.md` for the live Zeko testnet loop, `docs/evm-hosted-facilitators.md` for Base vs Ethereum hosted/self-hosted facilitator behavior, `docs/multirail-paid-resource.md` for the shared `402` offer that advertises EVM plus Zeko together, `docs/adapter-architecture.md` for the recommended boundary between this repo and a separate app-specific adapter, `docs/tenant-onboarding.md` for hosted tenant registration and shared-vs-dedicated escrow modes, `docs/openclaw-agent-handoff.md` for the OpenClaw-specific app integration and signup flow, and `docs/evm-reserve-release-v2.md` for the EVM proof-gated reserve-release path.
 
 ## Execution Paths
 
@@ -69,6 +69,7 @@ For release hygiene, start from `.env.example` and keep real keys in an external
 - `pnpm build:evm-contracts`: compile the Base reserve-release escrow and mock USDC test contracts to `dist-evm/`
 - `pnpm build:zkapp`: compile the zkApp contract and helper scripts to `dist-zkapp/`
 - `pnpm deploy:base-sepolia-escrow`: deploy the Base reserve-release escrow contract to Base Sepolia
+- `pnpm deploy:ethereum-sepolia-escrow`: deploy the Ethereum reserve-release escrow contract to Ethereum Sepolia
 - `pnpm key-manager`: run the encrypted local key manager
 - `pnpm doctor:rails`: check whether the Base/EVM and Zeko rails are actually ready for a live run
 - `pnpm doctor:ethereum`: check the Ethereum mainnet rail specifically
@@ -77,6 +78,7 @@ For release hygiene, start from `.env.example` and keep real keys in an external
 - `pnpm zkapp:get-state`: read `beneficiary`, `serviceCommitment`, and `settlementRoot`
 - `pnpm smoke:evm-flow`: run the hosted-facilitator EVM smoke flow for Base or Ethereum mainnet
 - `pnpm smoke:base-sepolia-reserve-release`: run a live Base Sepolia reserve→release smoke, using official Sepolia USDC if available and otherwise deploying a mock USDC + escrow fallback on-chain
+- `pnpm smoke:ethereum-sepolia-reserve-release`: run a live Ethereum Sepolia reserve→release smoke, using official Sepolia USDC if available and otherwise deploying a mock USDC + escrow fallback on-chain
 - `pnpm smoke:ethereum-flow`: run the Ethereum mainnet smoke flow explicitly
 - `pnpm smoke:multirail-offer`: build a single `402 Payment Required` offer that advertises Base, optional Ethereum mainnet, and Zeko together
 - `pnpm smoke:zeko-flow`: run the `402 -> sign -> sendZkapp -> wait -> persist witness update -> fetch resource` smoke flow on Zeko testnet

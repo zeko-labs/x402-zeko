@@ -348,6 +348,13 @@ function isBytes32Hex(value) {
   return typeof value === "string" && /^0x[0-9a-fA-F]{64}$/.test(value);
 }
 
+function isReserveReleaseSettlementModel(value) {
+  return (
+    typeof value === "string" &&
+    value.endsWith("-reserve-release-v2")
+  );
+}
+
 function normalizeHostedRequest(input) {
   if (
     isRecord(input?.paymentPayload) &&
@@ -405,7 +412,7 @@ function normalizeHostedExactPayment(input) {
     ? accepted.extra.reserveRelease
     : null;
   const reserveRelease =
-    settlementModel === "x402-base-usdc-reserve-release-v2" || settlement?.mode === "reserve-release-v2"
+    isReserveReleaseSettlementModel(settlementModel) || settlement?.mode === "reserve-release-v2"
       ? {
           contractAddress: assertNonEmptyString(
             "paymentPayload.payload.settlement.contractAddress",

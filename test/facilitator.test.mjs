@@ -21,6 +21,10 @@ import {
   buildBaseUsdcRefundReservationCall,
   buildBaseUsdcReleaseReservationCall,
   buildBaseUsdcReserveReleaseIntent,
+  buildEthereumMainnetUsdcReserveReleaseRail,
+  buildEthereumUsdcRefundReservationCall,
+  buildEthereumUsdcReleaseReservationCall,
+  buildEthereumUsdcReserveReleaseIntent,
   buildReserveReleaseResultCommitment,
   buildCatalog,
   buildPaymentContextDigest,
@@ -305,6 +309,41 @@ test("builds concrete settlement intents for the chosen Zeko and Base targets", 
   assert.match(reserveIntent.settlement.requestIdHash, /^0x[0-9a-f]{64}$/);
   assert.match(reserveIntent.settlement.resultCommitment, /^0x[0-9a-f]{64}$/);
 
+  const ethereumReserveRail = buildEthereumMainnetUsdcReserveReleaseRail({
+    amount: "0.75",
+    payTo: "0x1111111111111111111111111111111111111111",
+    escrowContract: "0x8888888888888888888888888888888888888888",
+    expirySeconds: 7200
+  });
+  assert.equal(
+    ethereumReserveRail.settlementModel,
+    "x402-ethereum-mainnet-usdc-reserve-release-v2"
+  );
+  assert.equal(
+    ethereumReserveRail.extensions.evm.reserveRelease.escrowContract,
+    "0x8888888888888888888888888888888888888888"
+  );
+
+  const ethereumReserveIntent = buildEthereumUsdcReserveReleaseIntent({
+    from: "0x2222222222222222222222222222222222222222",
+    payTo: "0x1111111111111111111111111111111111111111",
+    escrowContract: "0x8888888888888888888888888888888888888888",
+    requestId: "req_demo_eth_escrow",
+    paymentId: "pay_demo_eth_escrow",
+    amount: "0.75",
+    resultDigest: "proof_result_digest_eth",
+    nonce: "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  });
+  assert.equal(ethereumReserveIntent.primitive, "evm-ethereum-mainnet-usdc-reserve-release-v2");
+  assert.equal(
+    ethereumReserveIntent.typedData.domain.verifyingContract,
+    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+  );
+  assert.equal(
+    ethereumReserveIntent.settlement.contractAddress,
+    "0x8888888888888888888888888888888888888888"
+  );
+
   const releaseCall = buildBaseUsdcReleaseReservationCall({
     escrowContract: "0x9999999999999999999999999999999999999999",
     requestId: "req_demo_escrow",
@@ -318,6 +357,19 @@ test("builds concrete settlement intents for the chosen Zeko and Base targets", 
   assert.equal(releaseCall.functionName, "releaseReservedPayment");
   assert.equal(releaseCall.args.length, 3);
 
+  const ethereumReleaseCall = buildEthereumUsdcReleaseReservationCall({
+    escrowContract: "0x8888888888888888888888888888888888888888",
+    requestId: "req_demo_eth_escrow",
+    paymentId: "pay_demo_eth_escrow",
+    resultCommitment: buildReserveReleaseResultCommitment({
+      requestId: "req_demo_eth_escrow",
+      paymentId: "pay_demo_eth_escrow",
+      resultDigest: "proof_result_digest_eth"
+    })
+  });
+  assert.equal(ethereumReleaseCall.network.networkId, "eip155:1");
+  assert.equal(ethereumReleaseCall.functionName, "releaseReservedPayment");
+
   const refundCall = buildBaseUsdcRefundReservationCall({
     escrowContract: "0x9999999999999999999999999999999999999999",
     requestId: "req_demo_escrow",
@@ -325,6 +377,14 @@ test("builds concrete settlement intents for the chosen Zeko and Base targets", 
   });
   assert.equal(refundCall.functionName, "refundExpiredPayment");
   assert.equal(refundCall.args.length, 2);
+
+  const ethereumRefundCall = buildEthereumUsdcRefundReservationCall({
+    escrowContract: "0x8888888888888888888888888888888888888888",
+    requestId: "req_demo_eth_escrow",
+    paymentId: "pay_demo_eth_escrow"
+  });
+  assert.equal(ethereumRefundCall.network.networkId, "eip155:1");
+  assert.equal(ethereumRefundCall.functionName, "refundExpiredPayment");
 });
 
 test("offers a Circle Gateway-flavored Base rail when batching is desired", () => {

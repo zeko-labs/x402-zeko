@@ -26,6 +26,7 @@ function assertAddressLike(label, value) {
 
 export const X402_RELEASER_ROLE = keccak256(toBytes("RELEASER_ROLE"));
 export const X402_PAUSER_ROLE = keccak256(toBytes("PAUSER_ROLE"));
+export const X402_EVM_USDC_RESERVE_RELEASE_KIND = "x402-evm-usdc-reserve-release-v2";
 
 export const X402_RESERVE_RELEASE_ESCROW_INSPECTION_ABI = [
   {
@@ -71,7 +72,7 @@ export async function inspectReserveReleaseEscrow(input) {
   if (!codePresent) {
     return {
       ok: false,
-      contractKind: "x402-base-usdc-reserve-release-v2",
+      contractKind: X402_EVM_USDC_RESERVE_RELEASE_KIND,
       escrowAddress,
       codePresent,
       inspectionErrors: ["No contract code found at escrowAddress."]
@@ -144,7 +145,7 @@ export async function inspectReserveReleaseEscrow(input) {
 
   return {
     ok: inspectionErrors.length === 0,
-    contractKind: "x402-base-usdc-reserve-release-v2",
+    contractKind: X402_EVM_USDC_RESERVE_RELEASE_KIND,
     escrowAddress,
     codePresent,
     tokenAddress,
