@@ -9,7 +9,9 @@ import {
   buildBaseMainnetUsdcReserveReleaseRail,
   buildBaseUsdcExactEip3009Intent,
   buildBaseUsdcReserveReleaseIntent,
+  buildEthereumMainnetUsdcReserveReleaseRail,
   buildEthereumMainnetUsdcExactEip3009Intent,
+  buildEthereumUsdcReserveReleaseIntent,
   buildEthereumMainnetUsdcRail,
   buildPaymentPayload,
   buildPaymentRequired,
@@ -222,6 +224,52 @@ test("self-hosted facilitator can reserve Base USDC into a reserve-release escro
 
   assert.equal(settlement.success, true);
   assert.equal(settlement.settlementModel, "x402-base-usdc-reserve-release-v2");
+  assert.equal(
+    mock.calls.some((entry) => entry[0] === "writeContract" && entry[1] === "reserveExactWithAuthorization"),
+    true
+  );
+});
+
+test("self-hosted facilitator can reserve Ethereum USDC into a reserve-release escrow contract", async () => {
+  const mock = createMockClients();
+  const rail = buildEthereumMainnetUsdcReserveReleaseRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    amount: "0.75",
+    escrowContract: "0x8888888888888888888888888888888888888888"
+  });
+  const intent = buildEthereumUsdcReserveReleaseIntent({
+    from: privateKeyToAccount(BUYER_PRIVATE_KEY).address,
+    payTo: rail.payTo,
+    escrowContract: "0x8888888888888888888888888888888888888888",
+    requestId: "req_self_hosted_eth_reserve",
+    paymentId: "pay_self_hosted_eth_reserve",
+    amount: rail.amount,
+    resultDigest: "proof_result_digest_eth"
+  });
+  const { requirements, payload } = await buildSignedPayment({
+    rail,
+    intent,
+    paymentId: "pay_self_hosted_eth_reserve"
+  });
+  const facilitator = new SelfHostedEvmFacilitator({
+    networks: [
+      {
+        networkId: "eip155:1",
+        rpcUrl: "https://ethereum.example",
+        relayerPrivateKey: RELAYER_PRIVATE_KEY,
+        publicClient: mock.publicClient,
+        walletClient: mock.walletClient
+      }
+    ]
+  });
+
+  const settlement = await facilitator.settle({
+    paymentPayload: payload,
+    paymentRequirements: requirements
+  });
+
+  assert.equal(settlement.success, true);
+  assert.equal(settlement.settlementModel, "x402-ethereum-mainnet-usdc-reserve-release-v2");
   assert.equal(
     mock.calls.some((entry) => entry[0] === "writeContract" && entry[1] === "reserveExactWithAuthorization"),
     true

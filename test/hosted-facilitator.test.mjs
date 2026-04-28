@@ -8,7 +8,9 @@ import {
   buildBaseMainnetUsdcReserveReleaseRail,
   buildBaseUsdcExactEip3009Intent,
   buildBaseUsdcReserveReleaseIntent,
+  buildEthereumMainnetUsdcReserveReleaseRail,
   buildEthereumMainnetUsdcExactEip3009Intent,
+  buildEthereumUsdcReserveReleaseIntent,
   buildEthereumMainnetUsdcRail,
   buildHostedFacilitatorRequest,
   buildPaymentPayload,
@@ -147,6 +149,48 @@ test("maps reserve-release Base payloads into hosted facilitator request shape w
   assert.equal(
     request.paymentPayload.payload.settlement.contractAddress,
     "0x9999999999999999999999999999999999999999"
+  );
+});
+
+test("maps reserve-release Ethereum payloads into hosted facilitator request shape with escrow metadata", () => {
+  const rail = buildEthereumMainnetUsdcReserveReleaseRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    amount: "0.75",
+    escrowContract: "0x8888888888888888888888888888888888888888",
+    expirySeconds: 2400
+  });
+  const intent = buildEthereumUsdcReserveReleaseIntent({
+    from: "0x1111111111111111111111111111111111111111",
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    escrowContract: "0x8888888888888888888888888888888888888888",
+    requestId: "req_demo_eth_reserve",
+    paymentId: "pay_demo_eth_reserve",
+    amount: "0.75",
+    resultDigest: "proof_result_digest_eth"
+  });
+  const { requirements, payload } = buildSignedPayload({
+    rail,
+    intent,
+    payer: "0x1111111111111111111111111111111111111111",
+    paymentId: "pay_demo_eth_reserve"
+  });
+  const request = buildHostedFacilitatorRequest({
+    paymentRequirements: requirements,
+    paymentPayload: payload
+  });
+
+  assert.equal(
+    request.paymentPayload.accepted.extra.settlementModel,
+    "x402-ethereum-mainnet-usdc-reserve-release-v2"
+  );
+  assert.equal(
+    request.paymentPayload.accepted.extra.reserveRelease.escrowContract,
+    "0x8888888888888888888888888888888888888888"
+  );
+  assert.equal(request.paymentPayload.accepted.network, "eip155:1");
+  assert.equal(
+    request.paymentPayload.payload.settlement.contractAddress,
+    "0x8888888888888888888888888888888888888888"
   );
 });
 

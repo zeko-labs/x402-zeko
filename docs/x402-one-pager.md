@@ -1,116 +1,79 @@
-# x402 on Zeko: A One-Page Overview
+# x402 on Zeko
 
-`zeko-x402` is a multi-rail x402 toolkit for services that run on Zeko but want to get paid through the payment rails developers already use today.
+## The idea
 
-The simple idea is:
+The promise of `zeko-x402` is simple: developers should be able to run private or proof-backed work on Zeko while still getting paid through the x402 rails people already expect, especially Base and Ethereum.
 
-- the work can run privately on Zeko
-- the payment can settle on Base mainnet
-- Ethereum mainnet can be offered too
-- Zeko-native settlement can sit alongside those rails when a service wants stronger verification or privacy
-
-This keeps the front door familiar while letting Zeko become the place where new behavior shows up.
+That is the practical unlock. A developer does not need to choose between a familiar payments experience and a more advanced execution environment. They can keep the payment surface standard and move the interesting work to Zeko.
 
 ## Why this matters
 
-Today, many developers want to run private workflows, agent tasks, or proof-backed services without forcing their users to learn a new payment path first.
+x402 on EVM is already useful. It gives developers a clean way to put payments in front of an API, service, or workflow. But for agents and private compute, payment is only part of the story.
 
-The fastest path to adoption is:
+The real challenges are usually:
 
-- keep the payment negotiation as standard x402
-- offer Base first, because that matches the default x402 mental model
-- optionally offer Ethereum mainnet too
-- let the service itself run on Zeko
+- privacy
+- verification
+- automation
 
-That means a developer can deploy private logic on Zeko infrastructure and still charge through the EVM rails users already expect.
+An agent may be doing expensive work, handling sensitive context, or returning a result that should be provable instead of merely trusted. A plain EVM payment flow can charge for access, but it does not automatically tell you whether the work was actually done, whether the result matches a commitment, or whether too much information was exposed along the way.
 
-## What stays standard
+That is where Zeko starts to matter.
 
-`zeko-x402` does not need a new payment protocol to do this.
+## Privacy
 
-The standard pieces stay the same:
+Many of the most valuable agent workflows are also the ones that should not run in public. They may involve customer context, internal decision-making, model routing, or intermediate reasoning that a developer does not want to expose on a public chain.
+
+By keeping the work layer on Zeko, `zeko-x402` creates space for a more privacy-aware architecture. The payment can still settle on Base or Ethereum, but the execution path does not have to become fully public just because the payment happened on an EVM rail.
+
+That changes the design space in an important way. Developers can build paid agents and private workflows without forcing themselves into a model where every meaningful part of execution leaks into the settlement layer.
+
+## Verification
+
+The second big shift is verification.
+
+Most paid API flows today are still trust-heavy. A payment goes through, and the user receives a response. If the service is good, that may be enough. But agents raise the bar. Users increasingly want to know not only that a payment happened, but that the work associated with that payment actually completed in the right way.
+
+`zeko-x402` is designed to move in that direction. The standard x402 flow stays intact at the front door, but the back end can bind payments to proof digests, result commitments, or more explicit release conditions. That makes it possible to move beyond simple “pay and receive” behavior toward “pay for a verifiable outcome.”
+
+This is especially meaningful for higher-value agent tasks, where the important thing is not just access to an endpoint but confidence that the endpoint actually produced the promised work.
+
+## Automation through proofs
+
+The third piece is automation.
+
+Proofs are not only about human trust. They are also a way to automate economic behavior. If a workflow can produce a proof or committed result, then payment logic can eventually respond to that proof rather than to a manual operator decision.
+
+That is why the reserve-release direction matters so much. Instead of only supporting a simple settle-first payment path, `zeko-x402` now has a Base-first reserve-release v2 flow. In that model, funds can be reserved up front, work can run, and release can happen after a proof or result verification step, with refund behavior available if the work never completes correctly.
+
+In practice, that means the payment can move into an escrow contract first, and only get released once the workflow produces the proof or committed result needed to satisfy the release conditions.
+
+This is a much stronger primitive for agents than a plain one-shot payment. It starts to turn proofs into automation hooks. In other words, proofs do not just explain what happened after the fact. They can become part of what triggers the next economic action in the workflow.
+
+## Why keep x402 standard
+
+A big part of the strategy here is not changing what already works.
+
+The front door remains recognizable:
 
 - `402 Payment Required`
-- `PAYMENT-REQUIRED`
-- `PAYMENT-SIGNATURE`
-- `PAYMENT-RESPONSE`
-- one resource with multiple `accepts` options
+- normal x402 negotiation
+- Base and Ethereum as familiar payment rails
 
-In practice, the same paid endpoint can advertise:
+That compatibility matters because adoption usually does not fail on the quality of the back end. It fails when the front door feels foreign or expensive to integrate. By keeping x402 standard, `zeko-x402` lets developers adopt a better execution and verification model without asking users to relearn how the payment layer works.
 
-1. Base mainnet USDC
-2. Ethereum mainnet USDC
-3. a Zeko-native rail
+## What this enables now
 
-That makes compatibility the default, not an afterthought.
+Today, the immediate use case is clear. A developer can run a private workflow or agent on Zeko, accept payment on Base or Ethereum, and keep a path open to stronger verification and proof-based release logic.
 
-## Where Zeko adds value
+That means the stack is already useful before every long-term feature arrives. The first benefit is interoperability. The second is a more credible path to privacy and proof-aware automation than EVM x402 alone can offer.
 
-Base and Ethereum are the compatibility rails.
-Zeko is the upgrade rail.
+## The bigger opportunity
 
-That upgrade can eventually include:
+The bigger opportunity is not just “x402, but on Zeko.” It is a new kind of paid service architecture for agents.
 
-- verified-result receipts
-- privacy-forward payment gating
-- proof-backed settlement logic
-- tighter binding between “payment accepted” and “work was actually performed”
+In that architecture, Base and Ethereum remain the compatibility rails. They are how users and developers pay in the ecosystem they already know. Zeko becomes the upgrade rail. It is the place where privacy, verification, and proof-driven automation can become first-class parts of how paid agent workflows behave.
 
-So the point is not to replace standard x402. The point is to keep x402 recognizable while giving Zeko a place to improve what happens behind the payment.
+That is the core thesis behind `zeko-x402`.
 
-## Hosted and self-hosted
-
-`zeko-x402` is designed to work in both modes.
-
-### Self-hosted
-
-A developer can run the facilitator and settlement path themselves.
-
-### Managed
-
-A platform can host the x402 control plane for many developers, as long as each developer brings:
-
-- their own `payTo` wallet
-- their own relayer wallet
-- their own network-specific gas funding
-
-That model is important because it avoids turning the hosted service into a shared gas pool that can be abused.
-
-## The core flow
-
-```mermaid
-flowchart LR
-    A["Client or Agent"] --> B["Paid Service Endpoint"]
-    B --> C["402 Payment Required"]
-    C --> D{"Choose Rail"}
-    D --> E["Base USDC"]
-    D --> F["Ethereum USDC"]
-    D --> G["Zeko Native Rail"]
-    E --> H["x402 Verify + Settle"]
-    F --> H
-    G --> I["Zeko Settlement Path"]
-    H --> J["Payment Receipt"]
-    I --> J
-    J --> K["Private Work Runs on Zeko"]
-    K --> L["Result Returned to Client"]
-```
-
-## The architecture in one sentence
-
-Use standard x402 to unlock access, use Base or Ethereum for the default payment path, and use Zeko as the execution and verification layer behind the service.
-
-## What ships first
-
-The most practical first release is:
-
-- Base mainnet USDC as the default rail
-- Ethereum mainnet USDC as an optional rail
-- Zeko-native settlement as an optional advanced rail
-- a self-hostable toolkit for developers
-- a hosted control plane for teams that want turnkey adoption
-
-That gives developers an immediate path to monetize private Zeko-hosted workflows without asking users to abandon the x402 ecosystem they already know.
-
-## Shareable summary
-
-`zeko-x402` lets developers run private services on Zeko while accepting standard x402 payments on Base or Ethereum. The payment flow stays familiar, the service logic can stay private, and Zeko becomes the place where verified-result and privacy-preserving upgrades can emerge over time.
+It keeps the payment surface familiar, while opening the door to a much more powerful model underneath: paid agents and private services that are not only monetized, but increasingly private, verifiable, and automatable.

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  X402_EVM_USDC_RESERVE_RELEASE_KIND,
   X402_PAUSER_ROLE,
   X402_RELEASER_ROLE,
   inspectReserveReleaseEscrow
@@ -49,7 +50,7 @@ test("escrow inspection reports a healthy reserve-release contract", async () =>
   });
 
   assert.equal(inspection.ok, true);
-  assert.equal(inspection.contractKind, "x402-base-usdc-reserve-release-v2");
+  assert.equal(inspection.contractKind, X402_EVM_USDC_RESERVE_RELEASE_KIND);
   assert.equal(inspection.tokenAddress, TOKEN_ADDRESS);
   assert.equal(inspection.matchesExpectedToken, true);
   assert.equal(inspection.releaserAuthorized, true);

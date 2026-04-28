@@ -1,6 +1,6 @@
-# Base Reserve-Release v2
+# EVM Reserve-Release v2
 
-`zeko-x402` now includes a narrowly scoped EVM v2 path for proof-gated settlement on Base mainnet.
+`zeko-x402` now includes a narrowly scoped EVM v2 path for proof-gated settlement on EVM rails, with Base as the first deployed and proven path.
 
 This path exists because a plain EIP-3009 payment authorization is not enough to guarantee payment after expensive private work has already run. In v1, the safe default is still:
 
@@ -18,8 +18,9 @@ The v2 path introduces a stronger option:
 
 This is intentionally narrow:
 
-- Base mainnet only
 - canonical USDC only
+- Base mainnet and Ethereum mainnet codepath support
+- Base-first live rollout and testnet deployment path today
 - standard x402 front door still unchanged
 - self-hosted or custom-facilitator path, not default CDP hosted behavior
 
@@ -30,10 +31,12 @@ The goal is to add one solid reserve-release primitive, not a giant generic escr
 Use:
 
 - `buildBaseMainnetUsdcReserveReleaseRail(...)`
+- `buildEthereumMainnetUsdcReserveReleaseRail(...)`
 
-This advertises a Base rail with:
+This advertises an EVM reserve-release rail with:
 
-- `settlementModel: "x402-base-usdc-reserve-release-v2"`
+- `settlementModel: "x402-base-usdc-reserve-release-v2"` on Base
+- `settlementModel: "x402-ethereum-mainnet-usdc-reserve-release-v2"` on Ethereum
 - `facilitatorMode: "evm-reserve-release"`
 - `extensions.evm.reserveRelease`
 
@@ -56,6 +59,7 @@ Optional inputs:
 Use:
 
 - `buildBaseUsdcReserveReleaseIntent(...)`
+- `buildEthereumUsdcReserveReleaseIntent(...)`
 
 This keeps the USDC signature flow familiar:
 
@@ -78,6 +82,8 @@ The package also exposes:
 
 - `buildBaseUsdcReleaseReservationCall(...)`
 - `buildBaseUsdcRefundReservationCall(...)`
+- `buildEthereumUsdcReleaseReservationCall(...)`
+- `buildEthereumUsdcRefundReservationCall(...)`
 - `buildReserveReleaseResultCommitment(...)`
 
 These helpers are intentionally small. They exist so the separate app adapter or proof verifier can:
@@ -90,7 +96,7 @@ without re-defining the settlement shape itself.
 
 ## Facilitator behavior
 
-The self-hosted EVM facilitator now supports two Base paths:
+The self-hosted EVM facilitator now supports two kinds of EVM paths:
 
 ### v1 exact settlement
 
@@ -104,7 +110,7 @@ The self-hosted EVM facilitator now supports two Base paths:
 - `payTo` is recorded as the intended recipient
 - later release or refund happens through separate contract calls
 
-That means v2 keeps x402 recognizable while changing the settlement primitive under the hood.
+That means v2 keeps x402 recognizable while changing the settlement primitive under the hood. Today the live deployment and smoke path in this repo are Base-first, but the codebase now exposes the same reserve-release helpers for Ethereum mainnet too.
 
 ## Suggested contract surface
 
@@ -238,6 +244,9 @@ That already works in this repo because the rail and intent builders carry the e
 - `buildBaseMainnetUsdcReserveReleaseRail({ escrowContract })`
 - `buildBaseUsdcReserveReleaseIntent({ escrowContract })`
 - `X402_BASE_SEPOLIA_ESCROW_ADDRESS` for the Sepolia smoke path
+- `buildEthereumMainnetUsdcReserveReleaseRail({ escrowContract })`
+- `buildEthereumUsdcReserveReleaseIntent({ escrowContract })`
+- `X402_ETHEREUM_SEPOLIA_ESCROW_ADDRESS` for the Ethereum Sepolia smoke path
 
 This gives stronger isolation if you want:
 
@@ -296,10 +305,17 @@ Use:
 - `pnpm build:evm-contracts`
 - `pnpm test`
 - `pnpm deploy:base-sepolia-escrow`
+- `pnpm deploy:ethereum-sepolia-escrow`
+- `pnpm smoke:base-sepolia-reserve-release`
+- `pnpm smoke:ethereum-sepolia-reserve-release`
 
 The deploy script targets Base Sepolia by default, uses `https://sepolia.base.org` when
 `X402_BASE_SEPOLIA_RPC_URL` is not set, and defaults the USDC token to Circle's official
 Base Sepolia USDC address.
+
+The matching Ethereum Sepolia tooling uses `https://ethereum-sepolia-rpc.publicnode.com` when
+`X402_ETHEREUM_SEPOLIA_RPC_URL` is not set, and defaults the USDC token to Circle's official
+Ethereum Sepolia USDC address.
 
 ## Why this matters
 

@@ -81,7 +81,7 @@ function buildReserveReleaseRail(target, input) {
     tokenAddress: target.asset.address,
     payTo: input.payTo,
     transferMethod: "eip3009",
-    settlementModel: input.settlementModel ?? "x402-base-usdc-reserve-release-v2",
+    settlementModel: input.settlementModel ?? "x402-evm-usdc-reserve-release-v2",
     description: input.description,
     facilitatorMode: input.facilitatorMode ?? "evm-reserve-release",
     extensions: {
@@ -100,6 +100,10 @@ function buildReserveReleaseRail(target, input) {
           resultCommitmentType: input.resultCommitmentType ?? "sha256-canonical",
           ...(typeof input.expirySeconds === "number" ? { expirySeconds: input.expirySeconds } : {})
         },
+        ...(typeof input.defaultFacilitator === "string" && input.defaultFacilitator.length > 0
+          ? { defaultFacilitator: input.defaultFacilitator }
+          : {}),
+        ...(input.requiresCustomFacilitator === true ? { requiresCustomFacilitator: true } : {}),
         ...(typeof input.maxTimeoutSeconds === "number" ? { maxTimeoutSeconds: input.maxTimeoutSeconds } : {})
       }
     }
@@ -167,6 +171,7 @@ export function buildBaseMainnetUsdcReserveReleaseRail(input) {
 
   return buildReserveReleaseRail(BASE_MAINNET_USDC, {
     ...input,
+    settlementModel: input.settlementModel ?? "x402-base-usdc-reserve-release-v2",
     description:
       input.description ??
       "Base mainnet USDC rail using reserve-now, release-on-proof settlement.",
@@ -184,6 +189,24 @@ export function buildEthereumMainnetUsdcRail(input) {
     description:
       input.description ??
       "Ethereum mainnet USDC rail using x402 exact EIP-3009 settlement.",
+    requiresCustomFacilitator:
+      input.requiresCustomFacilitator ??
+      !(typeof input.facilitatorUrl === "string" && input.facilitatorUrl.length > 0)
+  });
+}
+
+export function buildEthereumMainnetUsdcReserveReleaseRail(input) {
+  if (typeof input?.payTo !== "string" || input.payTo.length === 0) {
+    throw new Error("payTo is required for the Ethereum USDC reserve-release rail.");
+  }
+
+  return buildReserveReleaseRail(ETHEREUM_MAINNET_USDC, {
+    ...input,
+    settlementModel: input.settlementModel ?? "x402-ethereum-mainnet-usdc-reserve-release-v2",
+    description:
+      input.description ??
+      "Ethereum mainnet USDC rail using reserve-now, release-on-proof settlement.",
+    defaultFacilitator: input.defaultFacilitator ?? "self-hosted",
     requiresCustomFacilitator:
       input.requiresCustomFacilitator ??
       !(typeof input.facilitatorUrl === "string" && input.facilitatorUrl.length > 0)

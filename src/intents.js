@@ -272,7 +272,7 @@ export function buildEthereumMainnetUsdcExactEip3009Intent(input) {
   });
 }
 
-export function buildBaseUsdcReserveReleaseIntent(input) {
+function buildReserveReleaseIntent(target, input) {
   if (typeof input?.from !== "string" || input.from.length === 0) {
     throw new Error("from is required.");
   }
@@ -294,7 +294,7 @@ export function buildBaseUsdcReserveReleaseIntent(input) {
   }
 
   const amount = input.amount ?? "0.50";
-  const value = toAtomicUnits(amount, BASE_MAINNET_USDC.asset.decimals).toString();
+  const value = toAtomicUnits(amount, target.asset.decimals).toString();
   const validBeforeUnix =
     input.validBeforeUnix ??
     String(Math.floor(Date.now() / 1000) + 60 * 60);
@@ -318,14 +318,14 @@ export function buildBaseUsdcReserveReleaseIntent(input) {
     String(Math.floor(Date.now() / 1000) + (input.expirySeconds ?? 60 * 60));
 
   return {
-    primitive: "evm-base-usdc-reserve-release-v2",
+    primitive: input.primitive,
     settlementRail: "evm",
     network: {
-      networkId: BASE_MAINNET_USDC.networkId,
-      chainId: BASE_MAINNET_USDC.chainId,
-      chainName: BASE_MAINNET_USDC.chainName
+      networkId: target.networkId,
+      chainId: target.chainId,
+      chainName: target.chainName
     },
-    asset: BASE_MAINNET_USDC.asset,
+    asset: target.asset,
     transferMethod: "EIP-3009",
     facilitator: {
       kind: "evm-reserve-release",
@@ -333,10 +333,10 @@ export function buildBaseUsdcReserveReleaseIntent(input) {
     },
     typedData: {
       domain: {
-        name: BASE_MAINNET_USDC.eip712Name,
+        name: target.eip712Name,
         version: input.domainVersion ?? "2",
-        chainId: BASE_MAINNET_USDC.chainId,
-        verifyingContract: BASE_MAINNET_USDC.asset.address
+        chainId: target.chainId,
+        verifyingContract: target.asset.address
       },
       primaryType: "TransferWithAuthorization",
       types: transferWithAuthorizationTypes(),
@@ -352,7 +352,7 @@ export function buildBaseUsdcReserveReleaseIntent(input) {
     settlement: {
       mode: "reserve-release-v2",
       contractAddress: input.escrowContract,
-      tokenAddress: BASE_MAINNET_USDC.asset.address,
+      tokenAddress: target.asset.address,
       payTo: input.payTo,
       requestIdHash,
       paymentIdHash,
@@ -365,17 +365,31 @@ export function buildBaseUsdcReserveReleaseIntent(input) {
   };
 }
 
-export function buildBaseUsdcReleaseReservationCall(input) {
+export function buildBaseUsdcReserveReleaseIntent(input) {
+  return buildReserveReleaseIntent(BASE_MAINNET_USDC, {
+    ...input,
+    primitive: "evm-base-usdc-reserve-release-v2"
+  });
+}
+
+export function buildEthereumUsdcReserveReleaseIntent(input) {
+  return buildReserveReleaseIntent(ETHEREUM_MAINNET_USDC, {
+    ...input,
+    primitive: "evm-ethereum-mainnet-usdc-reserve-release-v2"
+  });
+}
+
+function buildReleaseReservationCall(target, input) {
   if (typeof input?.escrowContract !== "string" || input.escrowContract.length === 0) {
     throw new Error("escrowContract is required.");
   }
 
   return {
-    primitive: "evm-base-usdc-reserve-release-call-v2",
+    primitive: input.primitive,
     network: {
-      networkId: BASE_MAINNET_USDC.networkId,
-      chainId: BASE_MAINNET_USDC.chainId,
-      chainName: BASE_MAINNET_USDC.chainName
+      networkId: target.networkId,
+      chainId: target.chainId,
+      chainName: target.chainName
     },
     contractAddress: input.escrowContract,
     functionName: input?.releaseMethod ?? "releaseReservedPayment",
@@ -387,17 +401,17 @@ export function buildBaseUsdcReleaseReservationCall(input) {
   };
 }
 
-export function buildBaseUsdcRefundReservationCall(input) {
+function buildRefundReservationCall(target, input) {
   if (typeof input?.escrowContract !== "string" || input.escrowContract.length === 0) {
     throw new Error("escrowContract is required.");
   }
 
   return {
-    primitive: "evm-base-usdc-refund-reservation-call-v2",
+    primitive: input.primitive,
     network: {
-      networkId: BASE_MAINNET_USDC.networkId,
-      chainId: BASE_MAINNET_USDC.chainId,
-      chainName: BASE_MAINNET_USDC.chainName
+      networkId: target.networkId,
+      chainId: target.chainId,
+      chainName: target.chainName
     },
     contractAddress: input.escrowContract,
     functionName: input?.refundMethod ?? "refundExpiredPayment",
@@ -406,6 +420,34 @@ export function buildBaseUsdcRefundReservationCall(input) {
       toBytes32Hex(input?.paymentIdHash ?? input?.paymentId, "paymentIdHash")
     ]
   };
+}
+
+export function buildBaseUsdcReleaseReservationCall(input) {
+  return buildReleaseReservationCall(BASE_MAINNET_USDC, {
+    ...input,
+    primitive: "evm-base-usdc-reserve-release-call-v2"
+  });
+}
+
+export function buildEthereumUsdcReleaseReservationCall(input) {
+  return buildReleaseReservationCall(ETHEREUM_MAINNET_USDC, {
+    ...input,
+    primitive: "evm-ethereum-mainnet-usdc-reserve-release-call-v2"
+  });
+}
+
+export function buildBaseUsdcRefundReservationCall(input) {
+  return buildRefundReservationCall(BASE_MAINNET_USDC, {
+    ...input,
+    primitive: "evm-base-usdc-refund-reservation-call-v2"
+  });
+}
+
+export function buildEthereumUsdcRefundReservationCall(input) {
+  return buildRefundReservationCall(ETHEREUM_MAINNET_USDC, {
+    ...input,
+    primitive: "evm-ethereum-mainnet-usdc-refund-reservation-call-v2"
+  });
 }
 
 export function buildBaseUsdcCircleGatewayIntent(input) {
