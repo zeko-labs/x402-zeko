@@ -5,8 +5,12 @@ import {
   CDPFacilitatorClient,
   ETHEREUM_MAINNET_USDC,
   buildBaseMainnetUsdcRail,
+  buildBaseMainnetUsdcReserveReleaseFeeOnReserveRail,
+  buildBaseMainnetUsdcReserveReleaseFeeRail,
   buildBaseMainnetUsdcReserveReleaseRail,
   buildBaseUsdcExactEip3009Intent,
+  buildBaseUsdcReserveReleaseFeeOnReserveIntent,
+  buildBaseUsdcReserveReleaseFeeIntent,
   buildBaseUsdcReserveReleaseIntent,
   buildEthereumMainnetUsdcReserveReleaseRail,
   buildEthereumMainnetUsdcExactEip3009Intent,
@@ -149,6 +153,93 @@ test("maps reserve-release Base payloads into hosted facilitator request shape w
   assert.equal(
     request.paymentPayload.payload.settlement.contractAddress,
     "0x9999999999999999999999999999999999999999"
+  );
+});
+
+test("maps reserve-release Base fee-split payloads into hosted facilitator request shape", () => {
+  const rail = buildBaseMainnetUsdcReserveReleaseFeeRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    protocolFeePayTo: "0x000000000000000000000000000000000000FaCe",
+    feeBps: 100,
+    amount: "0.50",
+    escrowContract: "0x9999999999999999999999999999999999999999",
+    expirySeconds: 1800
+  });
+  const intent = buildBaseUsdcReserveReleaseFeeIntent({
+    from: "0x1111111111111111111111111111111111111111",
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    protocolFeePayTo: "0x000000000000000000000000000000000000FaCe",
+    feeBps: 100,
+    escrowContract: "0x9999999999999999999999999999999999999999",
+    requestId: "req_demo_fee_reserve",
+    paymentId: "pay_demo_fee_reserve",
+    amount: "0.50",
+    resultDigest: "proof_result_digest_fee_demo"
+  });
+  const { requirements, payload } = buildSignedPayload({
+    rail,
+    intent,
+    payer: "0x1111111111111111111111111111111111111111",
+    paymentId: "pay_demo_fee_reserve"
+  });
+  const request = buildHostedFacilitatorRequest({
+    paymentRequirements: requirements,
+    paymentPayload: payload
+  });
+
+  assert.equal(request.paymentPayload.accepted.extra.settlementModel, "x402-base-usdc-reserve-release-v3");
+  assert.equal(request.paymentPayload.accepted.extra.feeSplit.feeBps, 100);
+  assert.equal(request.paymentPayload.accepted.extra.feeSplit.grossAmount, "500000");
+  assert.equal(request.paymentPayload.accepted.extra.feeSplit.sellerAmount, "495000");
+  assert.equal(request.paymentPayload.accepted.extra.feeSplit.protocolFeeAmount, "5000");
+  assert.equal(
+    request.paymentPayload.payload.settlement.protocolFeePayTo,
+    "0x000000000000000000000000000000000000FaCe"
+  );
+  assert.equal(request.paymentPayload.payload.settlement.mode, "reserve-release-v3");
+});
+
+test("maps reserve-release Base fee-on-reserve payloads into hosted facilitator request shape", () => {
+  const rail = buildBaseMainnetUsdcReserveReleaseFeeOnReserveRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    protocolFeePayTo: "0x000000000000000000000000000000000000FaCe",
+    feeBps: 100,
+    amount: "0.50",
+    escrowContract: "0x9999999999999999999999999999999999999999",
+    expirySeconds: 1800
+  });
+  const intent = buildBaseUsdcReserveReleaseFeeOnReserveIntent({
+    from: "0x1111111111111111111111111111111111111111",
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    protocolFeePayTo: "0x000000000000000000000000000000000000FaCe",
+    feeBps: 100,
+    escrowContract: "0x9999999999999999999999999999999999999999",
+    requestId: "req_demo_fee_reserve_v4",
+    paymentId: "pay_demo_fee_reserve_v4",
+    amount: "0.50",
+    resultDigest: "proof_result_digest_fee_v4_demo"
+  });
+  const { requirements, payload } = buildSignedPayload({
+    rail,
+    intent,
+    payer: "0x1111111111111111111111111111111111111111",
+    paymentId: "pay_demo_fee_reserve_v4"
+  });
+  const request = buildHostedFacilitatorRequest({
+    paymentRequirements: requirements,
+    paymentPayload: payload
+  });
+
+  assert.equal(request.paymentPayload.accepted.extra.settlementModel, "x402-base-usdc-reserve-release-v4");
+  assert.equal(request.paymentPayload.accepted.extra.feeSplit.feeBps, 100);
+  assert.equal(request.paymentPayload.accepted.extra.feeSplit.grossAmount, "500000");
+  assert.equal(request.paymentPayload.accepted.extra.feeSplit.sellerAmount, "495000");
+  assert.equal(request.paymentPayload.accepted.extra.feeSplit.protocolFeeAmount, "5000");
+  assert.equal(request.paymentPayload.accepted.extra.feeSplit.feeSettlementMode, "fee-on-reserve-v1");
+  assert.equal(request.paymentPayload.payload.settlement.mode, "reserve-release-v4");
+  assert.equal(
+    request.paymentPayload.payload.settlement.reserveMethod,
+    "reserveExactWithAuthorizationSplitImmediateFee"
   );
 });
 

@@ -139,6 +139,7 @@ function toHostedExactOption(option) {
     ...(typeof option?.settlementModel === "string" ? { settlementModel: option.settlementModel } : {})
   };
   const reserveRelease = option?.extensions?.evm?.reserveRelease;
+  const feeSplit = option?.extensions?.evm?.feeSplit;
 
   if (isRecord(reserveRelease)) {
     extra.reserveRelease = {
@@ -149,6 +150,29 @@ function toHostedExactOption(option) {
       resultCommitmentType: reserveRelease.resultCommitmentType,
       ...(typeof reserveRelease.expirySeconds === "number"
         ? { expirySeconds: reserveRelease.expirySeconds }
+        : {})
+    };
+  }
+
+  if (isRecord(feeSplit)) {
+    const grossAmount = toAtomicUnits(amount, option.asset.decimals);
+    const feeBps =
+      Number.isInteger(feeSplit.feeBps) && feeSplit.feeBps >= 0 && feeSplit.feeBps <= 10_000
+        ? feeSplit.feeBps
+        : 0;
+    const protocolFeeAmount = (grossAmount * BigInt(feeBps)) / 10_000n;
+    const sellerAmount = grossAmount - protocolFeeAmount;
+    extra.feeSplit = {
+      version: feeSplit.version ?? "protocol-owner-fee-v1",
+      feeBps,
+      grossAmount: grossAmount.toString(),
+      sellerAmount: sellerAmount.toString(),
+      protocolFeeAmount: protocolFeeAmount.toString(),
+      sellerPayTo: feeSplit.sellerPayTo ?? option.payTo,
+      protocolFeePayTo: feeSplit.protocolFeePayTo,
+      feeSettlementMode: feeSplit.feeSettlementMode ?? "split-release-v1",
+      ...(typeof feeSplit.feePolicyDigest === "string" && feeSplit.feePolicyDigest.length > 0
+        ? { feePolicyDigest: feeSplit.feePolicyDigest }
         : {})
     };
   }

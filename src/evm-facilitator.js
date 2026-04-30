@@ -229,6 +229,58 @@ export const X402_RESERVE_RELEASE_ESCROW_ABI = [
   {
     type: "function",
     stateMutability: "nonpayable",
+    name: "reserveExactWithAuthorizationSplit",
+    inputs: [
+      { name: "requestIdHash", type: "bytes32" },
+      { name: "paymentIdHash", type: "bytes32" },
+      { name: "payer", type: "address" },
+      { name: "sellerPayTo", type: "address" },
+      { name: "protocolFeePayTo", type: "address" },
+      { name: "token", type: "address" },
+      { name: "grossAmount", type: "uint256" },
+      { name: "sellerAmount", type: "uint256" },
+      { name: "protocolFeeAmount", type: "uint256" },
+      { name: "feeBps", type: "uint16" },
+      { name: "validAfter", type: "uint256" },
+      { name: "validBefore", type: "uint256" },
+      { name: "nonce", type: "bytes32" },
+      { name: "resultCommitment", type: "bytes32" },
+      { name: "expiry", type: "uint256" },
+      { name: "v", type: "uint8" },
+      { name: "r", type: "bytes32" },
+      { name: "s", type: "bytes32" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    stateMutability: "nonpayable",
+    name: "reserveExactWithAuthorizationSplitImmediateFee",
+    inputs: [
+      { name: "requestIdHash", type: "bytes32" },
+      { name: "paymentIdHash", type: "bytes32" },
+      { name: "payer", type: "address" },
+      { name: "sellerPayTo", type: "address" },
+      { name: "protocolFeePayTo", type: "address" },
+      { name: "token", type: "address" },
+      { name: "grossAmount", type: "uint256" },
+      { name: "sellerAmount", type: "uint256" },
+      { name: "protocolFeeAmount", type: "uint256" },
+      { name: "feeBps", type: "uint16" },
+      { name: "validAfter", type: "uint256" },
+      { name: "validBefore", type: "uint256" },
+      { name: "nonce", type: "bytes32" },
+      { name: "resultCommitment", type: "bytes32" },
+      { name: "expiry", type: "uint256" },
+      { name: "v", type: "uint8" },
+      { name: "r", type: "bytes32" },
+      { name: "s", type: "bytes32" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    stateMutability: "nonpayable",
     name: "releaseReservedPayment",
     inputs: [
       { name: "requestIdHash", type: "bytes32" },
@@ -351,7 +403,11 @@ function isBytes32Hex(value) {
 function isReserveReleaseSettlementModel(value) {
   return (
     typeof value === "string" &&
-    value.endsWith("-reserve-release-v2")
+    (
+      value.endsWith("-reserve-release-v2") ||
+      value.endsWith("-reserve-release-v3") ||
+      value.endsWith("-reserve-release-v4")
+    )
   );
 }
 
@@ -411,8 +467,19 @@ function normalizeHostedExactPayment(input) {
   const reserveReleaseConfig = isRecord(accepted?.extra?.reserveRelease)
     ? accepted.extra.reserveRelease
     : null;
+  const feeSplitConfig = isRecord(accepted?.extra?.feeSplit)
+    ? accepted.extra.feeSplit
+    : null;
+  const hasFeeSplit = Boolean(
+    feeSplitConfig ||
+      settlement?.mode === "reserve-release-v3" ||
+      settlement?.mode === "reserve-release-v4"
+  );
   const reserveRelease =
-    isReserveReleaseSettlementModel(settlementModel) || settlement?.mode === "reserve-release-v2"
+    isReserveReleaseSettlementModel(settlementModel) ||
+    settlement?.mode === "reserve-release-v2" ||
+    settlement?.mode === "reserve-release-v3" ||
+    settlement?.mode === "reserve-release-v4"
       ? {
           contractAddress: assertNonEmptyString(
             "paymentPayload.payload.settlement.contractAddress",
@@ -468,7 +535,71 @@ function normalizeHostedExactPayment(input) {
           refundMethod:
             settlement?.refundMethod ??
             reserveReleaseConfig?.refundMethod ??
-            "refundExpiredPayment"
+            "refundExpiredPayment",
+          ...(hasFeeSplit
+            ? (() => {
+                const feeBps = Number(
+                  settlement?.feeBps ?? feeSplitConfig?.feeBps ?? 0
+                );
+                const grossAmount = BigInt(
+                  assertNonEmptyString(
+                    "paymentPayload.payload.settlement.grossAmount",
+                    settlement?.grossAmount ?? feeSplitConfig?.grossAmount ?? accepted.amount
+                  )
+                );
+                const sellerAmount = BigInt(
+                  assertNonEmptyString(
+                    "paymentPayload.payload.settlement.sellerAmount",
+                    settlement?.sellerAmount ?? feeSplitConfig?.sellerAmount ?? accepted.amount
+                  )
+                );
+                const protocolFeeAmount = BigInt(
+                  assertNonEmptyString(
+                    "paymentPayload.payload.settlement.protocolFeeAmount",
+                    settlement?.protocolFeeAmount ?? feeSplitConfig?.protocolFeeAmount ?? "0"
+                  )
+                );
+                const sellerPayTo = assertNonEmptyString(
+                  "paymentPayload.payload.settlement.sellerPayTo",
+                  settlement?.sellerPayTo ?? feeSplitConfig?.sellerPayTo ?? payTo
+                );
+                const protocolFeePayTo =
+                  typeof (settlement?.protocolFeePayTo ?? feeSplitConfig?.protocolFeePayTo) === "string"
+                    ? settlement?.protocolFeePayTo ?? feeSplitConfig?.protocolFeePayTo
+                    : "";
+
+                if (!Number.isInteger(feeBps) || feeBps < 0 || feeBps > 10_000) {
+                  throw new Error("paymentPayload.payload.settlement.feeBps must be an integer between 0 and 10000.");
+                }
+                if (grossAmount !== acceptedAmount) {
+                  throw new Error("paymentPayload.payload.settlement.grossAmount must match paymentPayload.accepted.amount.");
+                }
+                if (sellerAmount + protocolFeeAmount !== grossAmount) {
+                  throw new Error("paymentPayload.payload.settlement.grossAmount must equal sellerAmount + protocolFeeAmount.");
+                }
+                if (sellerPayTo.toLowerCase() !== payTo.toLowerCase()) {
+                  throw new Error("paymentPayload.payload.settlement.sellerPayTo must match paymentPayload.accepted.payTo.");
+                }
+                if (protocolFeeAmount > 0n && protocolFeePayTo.length === 0) {
+                  throw new Error("paymentPayload.payload.settlement.protocolFeePayTo is required when protocolFeeAmount > 0.");
+                }
+
+                return {
+                  feeSplit: {
+                    feeBps,
+                    grossAmount,
+                    sellerAmount,
+                    protocolFeeAmount,
+                    sellerPayTo,
+                    protocolFeePayTo,
+                    feeSettlementMode:
+                      settlement?.feeSettlementMode ??
+                      feeSplitConfig?.feeSettlementMode ??
+                      "split-release-v1"
+                  }
+                };
+              })()
+            : {})
         }
       : null;
   const authorizationTarget = reserveRelease?.contractAddress ?? payTo;
@@ -594,6 +725,18 @@ function verificationSummary(payment, clients, input) {
     relayer: clients.account.address,
     authorizationUsed: input.authorizationUsed,
     balance: input.balance.toString(),
+    ...(payment.reserveRelease?.feeSplit
+      ? {
+          feeSplit: {
+            feeBps: payment.reserveRelease.feeSplit.feeBps,
+            grossAmount: payment.reserveRelease.feeSplit.grossAmount.toString(),
+            sellerAmount: payment.reserveRelease.feeSplit.sellerAmount.toString(),
+            protocolFeeAmount: payment.reserveRelease.feeSplit.protocolFeeAmount.toString(),
+            sellerPayTo: payment.reserveRelease.feeSplit.sellerPayTo,
+            protocolFeePayTo: payment.reserveRelease.feeSplit.protocolFeePayTo
+          }
+        }
+      : {}),
     ...(input.invalidReason ? { invalidReason: input.invalidReason, error: input.invalidReason } : {})
   };
 }
@@ -670,22 +813,43 @@ async function settleHostedPayment(clients, input) {
           address: payment.reserveRelease.contractAddress,
           abi: X402_RESERVE_RELEASE_ESCROW_ABI,
           functionName: payment.reserveRelease.reserveMethod,
-          args: [
-            payment.reserveRelease.requestIdHash,
-            payment.reserveRelease.paymentIdHash,
-            payment.authorization.from,
-            payment.payTo,
-            payment.tokenAddress,
-            payment.authorization.value,
-            payment.authorization.validAfter,
-            payment.authorization.validBefore,
-            payment.authorization.nonce,
-            payment.reserveRelease.resultCommitment,
-            payment.reserveRelease.reserveExpiryUnix,
-            v,
-            r,
-            s
-          ]
+          args: payment.reserveRelease.feeSplit
+            ? [
+                payment.reserveRelease.requestIdHash,
+                payment.reserveRelease.paymentIdHash,
+                payment.authorization.from,
+                payment.reserveRelease.feeSplit.sellerPayTo,
+                payment.reserveRelease.feeSplit.protocolFeePayTo,
+                payment.tokenAddress,
+                payment.reserveRelease.feeSplit.grossAmount,
+                payment.reserveRelease.feeSplit.sellerAmount,
+                payment.reserveRelease.feeSplit.protocolFeeAmount,
+                payment.reserveRelease.feeSplit.feeBps,
+                payment.authorization.validAfter,
+                payment.authorization.validBefore,
+                payment.authorization.nonce,
+                payment.reserveRelease.resultCommitment,
+                payment.reserveRelease.reserveExpiryUnix,
+                v,
+                r,
+                s
+              ]
+            : [
+                payment.reserveRelease.requestIdHash,
+                payment.reserveRelease.paymentIdHash,
+                payment.authorization.from,
+                payment.payTo,
+                payment.tokenAddress,
+                payment.authorization.value,
+                payment.authorization.validAfter,
+                payment.authorization.validBefore,
+                payment.authorization.nonce,
+                payment.reserveRelease.resultCommitment,
+                payment.reserveRelease.reserveExpiryUnix,
+                v,
+                r,
+                s
+              ]
         })
       : await clients.walletClient.writeContract({
           account: clients.account,
@@ -727,6 +891,18 @@ async function settleHostedPayment(clients, input) {
                 requestIdHash: payment.reserveRelease.requestIdHash,
                 paymentIdHash: payment.reserveRelease.paymentIdHash,
                 resultCommitment: payment.reserveRelease.resultCommitment
+              }
+            }
+          : {}),
+        ...(payment.reserveRelease?.feeSplit
+          ? {
+              feeSplit: {
+                feeBps: payment.reserveRelease.feeSplit.feeBps,
+                grossAmount: payment.reserveRelease.feeSplit.grossAmount.toString(),
+                sellerAmount: payment.reserveRelease.feeSplit.sellerAmount.toString(),
+                protocolFeeAmount: payment.reserveRelease.feeSplit.protocolFeeAmount.toString(),
+                sellerPayTo: payment.reserveRelease.feeSplit.sellerPayTo,
+                protocolFeePayTo: payment.reserveRelease.feeSplit.protocolFeePayTo
               }
             }
           : {}),

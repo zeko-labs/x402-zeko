@@ -295,6 +295,22 @@ function buildReserveReleaseIntent(target, input) {
 
   const amount = input.amount ?? "0.50";
   const value = toAtomicUnits(amount, target.asset.decimals).toString();
+  const grossAmount = BigInt(value);
+  const feeBps =
+    Number.isInteger(input?.feeBps) && input.feeBps >= 0 && input.feeBps <= 10_000
+      ? input.feeBps
+      : 0;
+  const protocolFeePayTo =
+    typeof input?.protocolFeePayTo === "string" && input.protocolFeePayTo.length > 0
+      ? input.protocolFeePayTo
+      : null;
+  const feeOnReserve =
+    input?.feeSettlementMode === "fee-on-reserve-v1" ||
+    input?.reserveMethod === "reserveExactWithAuthorizationSplitImmediateFee" ||
+    (typeof input?.primitive === "string" && input.primitive.endsWith("-v4"));
+  const protocolFeeAmount =
+    protocolFeePayTo && feeBps > 0 ? (grossAmount * BigInt(feeBps)) / 10_000n : 0n;
+  const sellerAmount = grossAmount - protocolFeeAmount;
   const validBeforeUnix =
     input.validBeforeUnix ??
     String(Math.floor(Date.now() / 1000) + 60 * 60);
@@ -350,7 +366,12 @@ function buildReserveReleaseIntent(target, input) {
       }
     },
     settlement: {
-      mode: "reserve-release-v2",
+      mode:
+        protocolFeePayTo && feeBps > 0
+          ? feeOnReserve
+            ? "reserve-release-v4"
+            : "reserve-release-v3"
+          : "reserve-release-v2",
       contractAddress: input.escrowContract,
       tokenAddress: target.asset.address,
       payTo: input.payTo,
@@ -358,7 +379,23 @@ function buildReserveReleaseIntent(target, input) {
       paymentIdHash,
       resultCommitment,
       reserveExpiryUnix: String(reserveExpiryUnix),
-      reserveMethod: input.reserveMethod ?? "reserveExactWithAuthorization",
+      ...(protocolFeePayTo && feeBps > 0
+        ? {
+            sellerPayTo: input.payTo,
+            protocolFeePayTo,
+            grossAmount: grossAmount.toString(),
+            sellerAmount: sellerAmount.toString(),
+            protocolFeeAmount: protocolFeeAmount.toString(),
+            feeBps
+          }
+        : {}),
+      reserveMethod:
+        input.reserveMethod ??
+        (protocolFeePayTo && feeBps > 0
+          ? feeOnReserve
+            ? "reserveExactWithAuthorizationSplitImmediateFee"
+            : "reserveExactWithAuthorizationSplit"
+          : "reserveExactWithAuthorization"),
       releaseMethod: input.releaseMethod ?? "releaseReservedPayment",
       refundMethod: input.refundMethod ?? "refundExpiredPayment"
     }
@@ -376,6 +413,34 @@ export function buildEthereumUsdcReserveReleaseIntent(input) {
   return buildReserveReleaseIntent(ETHEREUM_MAINNET_USDC, {
     ...input,
     primitive: "evm-ethereum-mainnet-usdc-reserve-release-v2"
+  });
+}
+
+export function buildBaseUsdcReserveReleaseFeeIntent(input) {
+  return buildReserveReleaseIntent(BASE_MAINNET_USDC, {
+    ...input,
+    primitive: "evm-base-usdc-reserve-release-v3"
+  });
+}
+
+export function buildEthereumUsdcReserveReleaseFeeIntent(input) {
+  return buildReserveReleaseIntent(ETHEREUM_MAINNET_USDC, {
+    ...input,
+    primitive: "evm-ethereum-mainnet-usdc-reserve-release-v3"
+  });
+}
+
+export function buildBaseUsdcReserveReleaseFeeOnReserveIntent(input) {
+  return buildReserveReleaseIntent(BASE_MAINNET_USDC, {
+    ...input,
+    primitive: "evm-base-usdc-reserve-release-v4"
+  });
+}
+
+export function buildEthereumUsdcReserveReleaseFeeOnReserveIntent(input) {
+  return buildReserveReleaseIntent(ETHEREUM_MAINNET_USDC, {
+    ...input,
+    primitive: "evm-ethereum-mainnet-usdc-reserve-release-v4"
   });
 }
 
