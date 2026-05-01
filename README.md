@@ -69,7 +69,12 @@ For release hygiene, start from `.env.example` and keep real keys in an external
 - `pnpm build:evm-contracts`: compile the Base reserve-release escrow and mock USDC test contracts to `dist-evm/`
 - `pnpm build:zkapp`: compile the zkApp contract and helper scripts to `dist-zkapp/`
 - `pnpm deploy:base-sepolia-escrow`: deploy the Base reserve-release escrow contract to Base Sepolia
+- `pnpm deploy:base-mainnet-escrow-v4`: deploy the fee-on-reserve V4 escrow contract to Base mainnet
+- `pnpm deploy:base-mainnet-escrow-factory`: deploy the per-seller V4 escrow factory to Base mainnet
 - `pnpm deploy:ethereum-sepolia-escrow`: deploy the Ethereum reserve-release escrow contract to Ethereum Sepolia
+- `pnpm deploy:ethereum-mainnet-escrow-v4`: deploy the fee-on-reserve V4 escrow contract to Ethereum mainnet
+- `pnpm deploy:ethereum-mainnet-escrow-factory`: deploy the per-seller V4 escrow factory to Ethereum mainnet
+- `pnpm create:seller-escrow`: create one reusable seller-isolated escrow from the deployed mainnet factory
 - `pnpm key-manager`: run the encrypted local key manager
 - `pnpm doctor:rails`: check whether the Base/EVM and Zeko rails are actually ready for a live run
 - `pnpm doctor:ethereum`: check the Ethereum mainnet rail specifically
@@ -96,6 +101,16 @@ You do not have to self-host every rail.
 
 If you want one deployment path that works for Base and Ethereum today, use the self-hosted facilitator in this repo.
 `render.yaml` is included for a simple Render web-service deploy, and the facilitator already exposes `GET /health`, `GET /supported`, `POST /verify`, and `POST /settle`.
+
+## Escrow Isolation
+
+The managed default can still use one shared escrow per network, but the safer production pattern is:
+
+- one deployed V4 escrow implementation per network
+- one factory per network
+- one reusable escrow contract per seller or tenant
+
+That isolates balances per seller without introducing proxy or upgradeable storage semantics into the escrow contract itself.
 
 ## Operational Rule
 

@@ -516,3 +516,31 @@ test("reserve-release escrow can refund expired reservations back to the payer",
   assert.equal(payerBalanceAfterRefund - payerBalanceBeforeRefund, amount);
   assert.equal(await usdc.balanceOf(await escrow.getAddress()), 0n);
 });
+
+test("seller escrow factory deploys one isolated V4 escrow per seller id", async () => {
+  const { provider, admin, releaser, usdc } = await setupContracts("X402BaseUSDCReserveEscrowV4");
+  const factoryArtifact = await loadCompiledArtifact("X402BaseUSDCReserveEscrowV4Factory");
+  const escrowArtifact = await loadCompiledArtifact("X402BaseUSDCReserveEscrowV4");
+  const factory = await deployContract(factoryArtifact, admin, [
+    await usdc.getAddress(),
+    admin.address,
+    releaser.address
+  ]);
+  const sellerIdHash = ethers.keccak256(ethers.toUtf8Bytes("seller:demo"));
+
+  await (await factory.connect(releaser).createSellerEscrow(sellerIdHash, admin.address, releaser.address)).wait();
+
+  const escrowAddress = await factory.sellerEscrowOf(sellerIdHash);
+  const sellerEscrow = new ethers.Contract(escrowAddress, escrowArtifact.abi, provider);
+  const releaserRole = await sellerEscrow.RELEASER_ROLE();
+
+  assert.equal(await sellerEscrow.usdc(), await usdc.getAddress());
+  assert.equal(await sellerEscrow.hasRole(ethers.ZeroHash, admin.address), true);
+  assert.equal(await sellerEscrow.hasRole(releaserRole, releaser.address), true);
+
+  await assert.rejects(async () => {
+    await (
+      await factory.connect(releaser).createSellerEscrow(sellerIdHash, admin.address, releaser.address)
+    ).wait();
+  });
+});
