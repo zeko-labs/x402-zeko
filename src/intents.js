@@ -296,20 +296,37 @@ function buildReserveReleaseIntent(target, input) {
   const amount = input.amount ?? "0.50";
   const value = toAtomicUnits(amount, target.asset.decimals).toString();
   const grossAmount = BigInt(value);
-  const feeBps =
-    Number.isInteger(input?.feeBps) && input.feeBps >= 0 && input.feeBps <= 10_000
-      ? input.feeBps
-      : 0;
   const protocolFeePayTo =
     typeof input?.protocolFeePayTo === "string" && input.protocolFeePayTo.length > 0
       ? input.protocolFeePayTo
       : null;
+  const requestsFeeSplit =
+    protocolFeePayTo !== null ||
+    input?.feeBps !== undefined ||
+    input?.reserveMethod === "reserveExactWithAuthorizationSplit" ||
+    input?.reserveMethod === "reserveExactWithAuthorizationSplitImmediateFee" ||
+    (typeof input?.feeSettlementMode === "string" && input.feeSettlementMode.length > 0) ||
+    (typeof input?.primitive === "string" &&
+      (input.primitive.endsWith("-v3") || input.primitive.endsWith("-v4")));
   const feeOnReserve =
     input?.feeSettlementMode === "fee-on-reserve-v1" ||
     input?.reserveMethod === "reserveExactWithAuthorizationSplitImmediateFee" ||
     (typeof input?.primitive === "string" && input.primitive.endsWith("-v4"));
+  const feeBps =
+    requestsFeeSplit
+      ? (() => {
+          if (protocolFeePayTo === null) {
+            throw new Error("protocolFeePayTo is required for reserve-release fee intents.");
+          }
+          if (!Number.isInteger(input?.feeBps) || input.feeBps <= 0 || input.feeBps >= 10_000) {
+            throw new Error("feeBps must be an integer between 1 and 9999 for reserve-release fee intents.");
+          }
+
+          return input.feeBps;
+        })()
+      : 0;
   const protocolFeeAmount =
-    protocolFeePayTo && feeBps > 0 ? (grossAmount * BigInt(feeBps)) / 10_000n : 0n;
+    requestsFeeSplit ? (grossAmount * BigInt(feeBps)) / 10_000n : 0n;
   const sellerAmount = grossAmount - protocolFeeAmount;
   const validBeforeUnix =
     input.validBeforeUnix ??
@@ -367,7 +384,7 @@ function buildReserveReleaseIntent(target, input) {
     },
     settlement: {
       mode:
-        protocolFeePayTo && feeBps > 0
+        requestsFeeSplit
           ? feeOnReserve
             ? "reserve-release-v4"
             : "reserve-release-v3"
@@ -379,7 +396,7 @@ function buildReserveReleaseIntent(target, input) {
       paymentIdHash,
       resultCommitment,
       reserveExpiryUnix: String(reserveExpiryUnix),
-      ...(protocolFeePayTo && feeBps > 0
+      ...(requestsFeeSplit
         ? {
             sellerPayTo: input.payTo,
             protocolFeePayTo,
@@ -391,7 +408,7 @@ function buildReserveReleaseIntent(target, input) {
         : {}),
       reserveMethod:
         input.reserveMethod ??
-        (protocolFeePayTo && feeBps > 0
+        (requestsFeeSplit
           ? feeOnReserve
             ? "reserveExactWithAuthorizationSplitImmediateFee"
             : "reserveExactWithAuthorizationSplit"

@@ -6,8 +6,10 @@ import {
   SelfHostedEvmFacilitator,
   X402_RESERVE_RELEASE_ESCROW_ABI,
   buildBaseMainnetUsdcRail,
+  buildBaseMainnetUsdcReserveReleaseFeeRail,
   buildBaseMainnetUsdcReserveReleaseRail,
   buildBaseUsdcExactEip3009Intent,
+  buildBaseUsdcReserveReleaseFeeIntent,
   buildBaseUsdcReserveReleaseIntent,
   buildEthereumMainnetUsdcReserveReleaseRail,
   buildEthereumMainnetUsdcExactEip3009Intent,
@@ -273,6 +275,59 @@ test("self-hosted facilitator can reserve Ethereum USDC into a reserve-release e
   assert.equal(
     mock.calls.some((entry) => entry[0] === "writeContract" && entry[1] === "reserveExactWithAuthorization"),
     true
+  );
+});
+
+test("self-hosted facilitator rejects tampered hosted fee split settlement terms", async () => {
+  const mock = createMockClients();
+  const rail = buildBaseMainnetUsdcReserveReleaseFeeRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    protocolFeePayTo: "0x000000000000000000000000000000000000FaCe",
+    feeBps: 100,
+    amount: "0.50",
+    escrowContract: "0x9999999999999999999999999999999999999999"
+  });
+  const intent = buildBaseUsdcReserveReleaseFeeIntent({
+    from: privateKeyToAccount(BUYER_PRIVATE_KEY).address,
+    payTo: rail.payTo,
+    protocolFeePayTo: "0x000000000000000000000000000000000000FaCe",
+    feeBps: 100,
+    escrowContract: "0x9999999999999999999999999999999999999999",
+    requestId: "req_self_hosted_fee_tamper",
+    paymentId: "pay_self_hosted_fee_tamper",
+    amount: rail.amount,
+    resultDigest: "proof_result_digest_fee_tamper"
+  });
+  const { requirements, payload } = await buildSignedPayment({
+    rail,
+    intent,
+    paymentId: "pay_self_hosted_fee_tamper"
+  });
+
+  payload.authorization.settlement.feeBps = 0;
+  payload.authorization.settlement.protocolFeeAmount = "0";
+  payload.authorization.settlement.sellerAmount = "500000";
+  payload.authorization.settlement.protocolFeePayTo = "0x000000000000000000000000000000000000dEaD";
+
+  const facilitator = new SelfHostedEvmFacilitator({
+    networks: [
+      {
+        networkId: "eip155:8453",
+        rpcUrl: "https://base.example",
+        relayerPrivateKey: RELAYER_PRIVATE_KEY,
+        publicClient: mock.publicClient,
+        walletClient: mock.walletClient
+      }
+    ]
+  });
+
+  await assert.rejects(
+    () =>
+      facilitator.settle({
+        paymentPayload: payload,
+        paymentRequirements: requirements
+      }),
+    /must match the advertised reserve-release fee split/
   );
 });
 

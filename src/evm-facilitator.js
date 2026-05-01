@@ -411,6 +411,33 @@ function isReserveReleaseSettlementModel(value) {
   );
 }
 
+function assertOptionalStringMatch(label, provided, expected) {
+  if (typeof provided === "string" && provided.length > 0 && provided !== expected) {
+    throw new Error(`${label} must match the advertised reserve-release configuration.`);
+  }
+
+  return expected;
+}
+
+function assertOptionalAddressMatch(label, provided, expected) {
+  if (typeof provided === "string" && provided.length > 0 && provided.toLowerCase() !== expected.toLowerCase()) {
+    throw new Error(`${label} must match the advertised reserve-release configuration.`);
+  }
+
+  return expected;
+}
+
+function assertOptionalBigIntMatch(label, provided, expected) {
+  if (provided !== undefined && provided !== null) {
+    const actual = BigInt(assertNonEmptyString(label, provided));
+    if (actual !== expected) {
+      throw new Error(`${label} must match the advertised reserve-release fee split.`);
+    }
+  }
+
+  return expected;
+}
+
 function normalizeHostedRequest(input) {
   if (
     isRecord(input?.paymentPayload) &&
@@ -481,10 +508,20 @@ function normalizeHostedExactPayment(input) {
     settlement?.mode === "reserve-release-v3" ||
     settlement?.mode === "reserve-release-v4"
       ? {
-          contractAddress: assertNonEmptyString(
-            "paymentPayload.payload.settlement.contractAddress",
-            settlement?.contractAddress ?? reserveReleaseConfig?.escrowContract
-          ),
+          contractAddress:
+            reserveReleaseConfig
+              ? assertOptionalAddressMatch(
+                  "paymentPayload.payload.settlement.contractAddress",
+                  settlement?.contractAddress,
+                  assertNonEmptyString(
+                    "paymentPayload.accepted.extra.reserveRelease.escrowContract",
+                    reserveReleaseConfig.escrowContract
+                  )
+                )
+              : assertNonEmptyString(
+                  "paymentPayload.payload.settlement.contractAddress",
+                  settlement?.contractAddress
+                ),
           requestIdHash: (() => {
             const value = assertNonEmptyString(
               "paymentPayload.payload.settlement.requestIdHash",
@@ -525,64 +562,78 @@ function normalizeHostedExactPayment(input) {
             )
           ),
           reserveMethod:
-            settlement?.reserveMethod ??
-            reserveReleaseConfig?.reserveMethod ??
-            "reserveExactWithAuthorization",
+            reserveReleaseConfig
+              ? assertOptionalStringMatch(
+                  "paymentPayload.payload.settlement.reserveMethod",
+                  settlement?.reserveMethod,
+                  reserveReleaseConfig?.reserveMethod ?? "reserveExactWithAuthorization"
+                )
+              : settlement?.reserveMethod ?? "reserveExactWithAuthorization",
           releaseMethod:
-            settlement?.releaseMethod ??
-            reserveReleaseConfig?.releaseMethod ??
-            "releaseReservedPayment",
+            reserveReleaseConfig
+              ? assertOptionalStringMatch(
+                  "paymentPayload.payload.settlement.releaseMethod",
+                  settlement?.releaseMethod,
+                  reserveReleaseConfig?.releaseMethod ?? "releaseReservedPayment"
+                )
+              : settlement?.releaseMethod ?? "releaseReservedPayment",
           refundMethod:
-            settlement?.refundMethod ??
-            reserveReleaseConfig?.refundMethod ??
-            "refundExpiredPayment",
+            reserveReleaseConfig
+              ? assertOptionalStringMatch(
+                  "paymentPayload.payload.settlement.refundMethod",
+                  settlement?.refundMethod,
+                  reserveReleaseConfig?.refundMethod ?? "refundExpiredPayment"
+                )
+              : settlement?.refundMethod ?? "refundExpiredPayment",
           ...(hasFeeSplit
             ? (() => {
-                const feeBps = Number(
-                  settlement?.feeBps ?? feeSplitConfig?.feeBps ?? 0
-                );
-                const grossAmount = BigInt(
-                  assertNonEmptyString(
-                    "paymentPayload.payload.settlement.grossAmount",
-                    settlement?.grossAmount ?? feeSplitConfig?.grossAmount ?? accepted.amount
-                  )
-                );
-                const sellerAmount = BigInt(
-                  assertNonEmptyString(
-                    "paymentPayload.payload.settlement.sellerAmount",
-                    settlement?.sellerAmount ?? feeSplitConfig?.sellerAmount ?? accepted.amount
-                  )
-                );
-                const protocolFeeAmount = BigInt(
-                  assertNonEmptyString(
-                    "paymentPayload.payload.settlement.protocolFeeAmount",
-                    settlement?.protocolFeeAmount ?? feeSplitConfig?.protocolFeeAmount ?? "0"
-                  )
-                );
-                const sellerPayTo = assertNonEmptyString(
-                  "paymentPayload.payload.settlement.sellerPayTo",
-                  settlement?.sellerPayTo ?? feeSplitConfig?.sellerPayTo ?? payTo
-                );
-                const protocolFeePayTo =
-                  typeof (settlement?.protocolFeePayTo ?? feeSplitConfig?.protocolFeePayTo) === "string"
-                    ? settlement?.protocolFeePayTo ?? feeSplitConfig?.protocolFeePayTo
-                    : "";
+                if (!feeSplitConfig) {
+                  throw new Error("Hosted reserve-release fee rails require paymentPayload.accepted.extra.feeSplit.");
+                }
 
-                if (!Number.isInteger(feeBps) || feeBps < 0 || feeBps > 10_000) {
-                  throw new Error("paymentPayload.payload.settlement.feeBps must be an integer between 0 and 10000.");
-                }
-                if (grossAmount !== acceptedAmount) {
-                  throw new Error("paymentPayload.payload.settlement.grossAmount must match paymentPayload.accepted.amount.");
-                }
-                if (sellerAmount + protocolFeeAmount !== grossAmount) {
-                  throw new Error("paymentPayload.payload.settlement.grossAmount must equal sellerAmount + protocolFeeAmount.");
+                const feeBps = Number(feeSplitConfig?.feeBps ?? 0);
+                const grossAmount = acceptedAmount;
+                const protocolFeeAmount = (grossAmount * BigInt(feeBps)) / 10_000n;
+                const sellerAmount = grossAmount - protocolFeeAmount;
+                const sellerPayTo = assertNonEmptyString(
+                  "paymentPayload.accepted.extra.feeSplit.sellerPayTo",
+                  feeSplitConfig?.sellerPayTo ?? payTo
+                );
+                const protocolFeePayTo = assertNonEmptyString(
+                  "paymentPayload.accepted.extra.feeSplit.protocolFeePayTo",
+                  feeSplitConfig?.protocolFeePayTo
+                );
+                const feeSettlementMode = feeSplitConfig?.feeSettlementMode ?? "split-release-v1";
+
+                if (!Number.isInteger(feeBps) || feeBps <= 0 || feeBps >= 10_000) {
+                  throw new Error("paymentPayload.accepted.extra.feeSplit.feeBps must be an integer between 1 and 9999.");
                 }
                 if (sellerPayTo.toLowerCase() !== payTo.toLowerCase()) {
-                  throw new Error("paymentPayload.payload.settlement.sellerPayTo must match paymentPayload.accepted.payTo.");
+                  throw new Error("paymentPayload.accepted.extra.feeSplit.sellerPayTo must match paymentPayload.accepted.payTo.");
                 }
-                if (protocolFeeAmount > 0n && protocolFeePayTo.length === 0) {
-                  throw new Error("paymentPayload.payload.settlement.protocolFeePayTo is required when protocolFeeAmount > 0.");
+
+                assertOptionalStringMatch("paymentPayload.payload.settlement.mode", settlement?.mode, feeSettlementMode === "fee-on-reserve-v1" ? "reserve-release-v4" : "reserve-release-v3");
+                if (settlement?.feeBps !== undefined && Number(settlement.feeBps) !== feeBps) {
+                  throw new Error("paymentPayload.payload.settlement.feeBps must match the advertised reserve-release fee split.");
                 }
+                assertOptionalBigIntMatch("paymentPayload.payload.settlement.grossAmount", settlement?.grossAmount, grossAmount);
+                assertOptionalBigIntMatch("paymentPayload.payload.settlement.sellerAmount", settlement?.sellerAmount, sellerAmount);
+                assertOptionalBigIntMatch(
+                  "paymentPayload.payload.settlement.protocolFeeAmount",
+                  settlement?.protocolFeeAmount,
+                  protocolFeeAmount
+                );
+                assertOptionalAddressMatch("paymentPayload.payload.settlement.sellerPayTo", settlement?.sellerPayTo, sellerPayTo);
+                assertOptionalAddressMatch(
+                  "paymentPayload.payload.settlement.protocolFeePayTo",
+                  settlement?.protocolFeePayTo,
+                  protocolFeePayTo
+                );
+                assertOptionalStringMatch(
+                  "paymentPayload.payload.settlement.feeSettlementMode",
+                  settlement?.feeSettlementMode,
+                  feeSettlementMode
+                );
 
                 return {
                   feeSplit: {
@@ -592,10 +643,10 @@ function normalizeHostedExactPayment(input) {
                     protocolFeeAmount,
                     sellerPayTo,
                     protocolFeePayTo,
-                    feeSettlementMode:
-                      settlement?.feeSettlementMode ??
-                      feeSplitConfig?.feeSettlementMode ??
-                      "split-release-v1"
+                    feeSettlementMode,
+                    ...(typeof feeSplitConfig?.feePolicyDigest === "string" && feeSplitConfig.feePolicyDigest.length > 0
+                      ? { feePolicyDigest: feeSplitConfig.feePolicyDigest }
+                      : {})
                   }
                 };
               })()

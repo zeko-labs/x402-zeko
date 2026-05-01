@@ -72,6 +72,28 @@ function buildReserveReleaseRail(target, input) {
     throw new Error("escrowContract is required for the reserve-release rail.");
   }
 
+  const hasProtocolFeePayTo =
+    typeof input?.protocolFeePayTo === "string" && input.protocolFeePayTo.length > 0;
+  const hasFeeExtras =
+    input?.feeBps !== undefined ||
+    (typeof input?.feeSettlementMode === "string" && input.feeSettlementMode.length > 0) ||
+    (typeof input?.feePolicyDigest === "string" && input.feePolicyDigest.length > 0);
+
+  if (hasFeeExtras && !hasProtocolFeePayTo) {
+    throw new Error("protocolFeePayTo is required when configuring a reserve-release fee split.");
+  }
+
+  const feeBps =
+    hasProtocolFeePayTo
+      ? (() => {
+          if (!Number.isInteger(input?.feeBps) || input.feeBps <= 0 || input.feeBps >= 10_000) {
+            throw new Error("feeBps must be an integer between 1 and 9999 for reserve-release fee rails.");
+          }
+
+          return input.feeBps;
+        })()
+      : null;
+
   return buildEvmRail({
     networkId: target.networkId,
     amount: input.amount,
@@ -104,7 +126,7 @@ function buildReserveReleaseRail(target, input) {
           ? {
               feeSplit: {
                 version: "protocol-owner-fee-v1",
-                feeBps: input.feeBps ?? 0,
+                feeBps,
                 sellerPayTo: input.payTo,
                 protocolFeePayTo: input.protocolFeePayTo,
                 feeSettlementMode: input.feeSettlementMode ?? "split-release-v1",

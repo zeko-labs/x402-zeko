@@ -243,6 +243,36 @@ test("maps reserve-release Base fee-on-reserve payloads into hosted facilitator 
   );
 });
 
+test("fee-specific reserve-release builders reject non-positive fee bps", () => {
+  assert.throws(
+    () =>
+      buildBaseMainnetUsdcReserveReleaseFeeRail({
+        payTo: "0x000000000000000000000000000000000000bEEF",
+        protocolFeePayTo: "0x000000000000000000000000000000000000FaCe",
+        feeBps: 0,
+        amount: "0.50",
+        escrowContract: "0x9999999999999999999999999999999999999999"
+      }),
+    /feeBps must be an integer between 1 and 9999/
+  );
+
+  assert.throws(
+    () =>
+      buildBaseUsdcReserveReleaseFeeIntent({
+        from: "0x1111111111111111111111111111111111111111",
+        payTo: "0x000000000000000000000000000000000000bEEF",
+        protocolFeePayTo: "0x000000000000000000000000000000000000FaCe",
+        feeBps: 0,
+        escrowContract: "0x9999999999999999999999999999999999999999",
+        requestId: "req_demo_fee_invalid",
+        paymentId: "pay_demo_fee_invalid",
+        amount: "0.50",
+        resultDigest: "proof_result_digest_invalid_fee"
+      }),
+    /feeBps must be an integer between 1 and 9999/
+  );
+});
+
 test("maps reserve-release Ethereum payloads into hosted facilitator request shape with escrow metadata", () => {
   const rail = buildEthereumMainnetUsdcReserveReleaseRail({
     payTo: "0x000000000000000000000000000000000000bEEF",
