@@ -10,6 +10,7 @@ const PAYER_PRIVATE_KEY = "0x100000000000000000000000000000000000000000000000000
 const ADMIN_PRIVATE_KEY = "0x1000000000000000000000000000000000000000000000000000000000000002";
 const RELEASER_PRIVATE_KEY = "0x1000000000000000000000000000000000000000000000000000000000000003";
 const PAYTO_PRIVATE_KEY = "0x1000000000000000000000000000000000000000000000000000000000000004";
+const FEE_PRIVATE_KEY = "0x1000000000000000000000000000000000000000000000000000000000000005";
 
 function fundedAccount(secretKey) {
   return {
@@ -25,7 +26,7 @@ async function deployContract(factoryArtifact, signer, args = []) {
   return contract;
 }
 
-async function setupContracts() {
+async function setupContracts(escrowContractName = "X402BaseUSDCReserveEscrow") {
   const eip1193Provider = ganache.provider({
     logging: { quiet: true },
     wallet: {
@@ -33,7 +34,8 @@ async function setupContracts() {
         fundedAccount(PAYER_PRIVATE_KEY),
         fundedAccount(ADMIN_PRIVATE_KEY),
         fundedAccount(RELEASER_PRIVATE_KEY),
-        fundedAccount(PAYTO_PRIVATE_KEY)
+        fundedAccount(PAYTO_PRIVATE_KEY),
+        fundedAccount(FEE_PRIVATE_KEY)
       ]
     }
   });
@@ -42,9 +44,10 @@ async function setupContracts() {
   const admin = new ethers.Wallet(ADMIN_PRIVATE_KEY, provider);
   const releaser = new ethers.Wallet(RELEASER_PRIVATE_KEY, provider);
   const payTo = new ethers.Wallet(PAYTO_PRIVATE_KEY, provider);
+  const protocolFeeRecipient = new ethers.Wallet(FEE_PRIVATE_KEY, provider);
 
   const usdcArtifact = await loadCompiledArtifact("MockUSDC3009");
-  const escrowArtifact = await loadCompiledArtifact("X402BaseUSDCReserveEscrow");
+  const escrowArtifact = await loadCompiledArtifact(escrowContractName);
   const usdc = await deployContract(usdcArtifact, admin);
   const escrow = await deployContract(escrowArtifact, releaser, [
     await usdc.getAddress(),
@@ -59,6 +62,7 @@ async function setupContracts() {
     admin,
     releaser,
     payTo,
+    protocolFeeRecipient,
     usdc,
     escrow
   };
@@ -156,6 +160,199 @@ test("reserve-release escrow can reserve then release Base-style USDC authorizat
 
   assert.equal(await usdc.balanceOf(payTo.address), amount);
   assert.equal(await usdc.balanceOf(await escrow.getAddress()), 0n);
+});
+
+test("reserve-release escrow v3 splits release between seller and protocol fee recipient", async () => {
+  const { provider, payer, releaser, payTo, protocolFeeRecipient, usdc, escrow } = await setupContracts(
+    "X402BaseUSDCReserveEscrowV3"
+  );
+  const grossAmount = 500_000n;
+  const sellerAmount = 495_000n;
+  const protocolFeeAmount = 5_000n;
+  const requestIdHash = ethers.keccak256(ethers.toUtf8Bytes("req_demo_fee"));
+  const paymentIdHash = ethers.keccak256(ethers.toUtf8Bytes("pay_demo_fee"));
+  const resultCommitment = ethers.keccak256(ethers.toUtf8Bytes("proof_demo_fee"));
+  const expiry = BigInt(Math.floor(Date.now() / 1000) + 3600);
+
+  await (await usdc.mint(payer.address, grossAmount)).wait();
+
+  const signaturePayload = await signTransferWithAuthorization({
+    payer,
+    tokenAddress: await usdc.getAddress(),
+    chainId: (await provider.getNetwork()).chainId,
+    to: await escrow.getAddress(),
+    value: grossAmount,
+    validBefore: BigInt(Math.floor(Date.now() / 1000) + 3600),
+    nonce: ethers.keccak256(ethers.toUtf8Bytes("nonce_fee_release"))
+  });
+
+  await (
+    await escrow.reserveExactWithAuthorizationSplit(
+      requestIdHash,
+      paymentIdHash,
+      payer.address,
+      payTo.address,
+      protocolFeeRecipient.address,
+      await usdc.getAddress(),
+      grossAmount,
+      sellerAmount,
+      protocolFeeAmount,
+      100,
+      signaturePayload.validAfter,
+      signaturePayload.validBefore,
+      signaturePayload.nonce,
+      resultCommitment,
+      expiry,
+      signaturePayload.signature.v,
+      signaturePayload.signature.r,
+      signaturePayload.signature.s
+    )
+  ).wait();
+
+  const reservation = await escrow.reservationOf(requestIdHash, paymentIdHash);
+  assert.equal(reservation.sellerPayTo, payTo.address);
+  assert.equal(reservation.protocolFeePayTo, protocolFeeRecipient.address);
+  assert.equal(reservation.grossAmount, grossAmount);
+  assert.equal(reservation.sellerAmount, sellerAmount);
+  assert.equal(reservation.protocolFeeAmount, protocolFeeAmount);
+
+  await (await escrow.connect(releaser).releaseReservedPayment(requestIdHash, paymentIdHash, resultCommitment)).wait();
+
+  assert.equal(await usdc.balanceOf(payTo.address), sellerAmount);
+  assert.equal(await usdc.balanceOf(protocolFeeRecipient.address), protocolFeeAmount);
+  assert.equal(await usdc.balanceOf(await escrow.getAddress()), 0n);
+});
+
+test("reserve-release escrow v4 keeps the protocol fee on reserve and refunds only the seller amount", async () => {
+  const { eip1193Provider, provider, payer, releaser, payTo, protocolFeeRecipient, usdc, escrow } = await setupContracts(
+    "X402BaseUSDCReserveEscrowV4"
+  );
+  const grossAmount = 500_000n;
+  const sellerAmount = 495_000n;
+  const protocolFeeAmount = 5_000n;
+  const requestIdHash = ethers.keccak256(ethers.toUtf8Bytes("req_demo_fee_on_reserve"));
+  const paymentIdHash = ethers.keccak256(ethers.toUtf8Bytes("pay_demo_fee_on_reserve"));
+  const resultCommitment = ethers.keccak256(ethers.toUtf8Bytes("proof_demo_fee_on_reserve"));
+  const currentBlock = await provider.getBlock("latest");
+  const now = BigInt(currentBlock.timestamp);
+  const expiry = now + 30n;
+
+  await (await usdc.mint(payer.address, grossAmount)).wait();
+
+  const signaturePayload = await signTransferWithAuthorization({
+    payer,
+    tokenAddress: await usdc.getAddress(),
+    chainId: (await provider.getNetwork()).chainId,
+    to: await escrow.getAddress(),
+    value: grossAmount,
+    validBefore: now + 3600n,
+    nonce: ethers.keccak256(ethers.toUtf8Bytes("nonce_fee_on_reserve"))
+  });
+
+  await (
+    await escrow.reserveExactWithAuthorizationSplitImmediateFee(
+      requestIdHash,
+      paymentIdHash,
+      payer.address,
+      payTo.address,
+      protocolFeeRecipient.address,
+      await usdc.getAddress(),
+      grossAmount,
+      sellerAmount,
+      protocolFeeAmount,
+      100,
+      signaturePayload.validAfter,
+      signaturePayload.validBefore,
+      signaturePayload.nonce,
+      resultCommitment,
+      expiry,
+      signaturePayload.signature.v,
+      signaturePayload.signature.r,
+      signaturePayload.signature.s
+    )
+  ).wait();
+
+  const reservation = await escrow.reservationOf(requestIdHash, paymentIdHash);
+  assert.equal(reservation.sellerAmount, sellerAmount);
+  assert.equal(reservation.protocolFeeAmount, protocolFeeAmount);
+  assert.equal(await usdc.balanceOf(protocolFeeRecipient.address), protocolFeeAmount);
+  assert.equal(await usdc.balanceOf(await escrow.getAddress()), sellerAmount);
+
+  await eip1193Provider.request({
+    method: "evm_increaseTime",
+    params: [60]
+  });
+  await eip1193Provider.request({
+    method: "evm_mine",
+    params: []
+  });
+
+  const payerBalanceBeforeRefund = await usdc.balanceOf(payer.address);
+  await (await escrow.refundExpiredPayment(requestIdHash, paymentIdHash)).wait();
+  const payerBalanceAfterRefund = await usdc.balanceOf(payer.address);
+
+  assert.equal(payerBalanceAfterRefund - payerBalanceBeforeRefund, sellerAmount);
+  assert.equal(await usdc.balanceOf(protocolFeeRecipient.address), protocolFeeAmount);
+  assert.equal(await usdc.balanceOf(await escrow.getAddress()), 0n);
+
+  const {
+    provider: releaseProvider,
+    payer: releasePayer,
+    releaser: releaseReleaser,
+    payTo: releasePayTo,
+    protocolFeeRecipient: releaseProtocolFeeRecipient,
+    usdc: releaseUsdc,
+    escrow: releaseEscrow
+  } = await setupContracts("X402BaseUSDCReserveEscrowV4");
+  const releaseRequestIdHash = ethers.keccak256(ethers.toUtf8Bytes("req_demo_fee_on_reserve_release"));
+  const releasePaymentIdHash = ethers.keccak256(ethers.toUtf8Bytes("pay_demo_fee_on_reserve_release"));
+  const releaseResultCommitment = ethers.keccak256(ethers.toUtf8Bytes("proof_demo_fee_on_reserve_release"));
+  const releaseExpiry = BigInt(Math.floor(Date.now() / 1000) + 3600);
+
+  await (await releaseUsdc.mint(releasePayer.address, grossAmount)).wait();
+
+  const releaseSignature = await signTransferWithAuthorization({
+    payer: releasePayer,
+    tokenAddress: await releaseUsdc.getAddress(),
+    chainId: (await releaseProvider.getNetwork()).chainId,
+    to: await releaseEscrow.getAddress(),
+    value: grossAmount,
+    validBefore: BigInt(Math.floor(Date.now() / 1000) + 3600),
+    nonce: ethers.keccak256(ethers.toUtf8Bytes("nonce_fee_on_reserve_release"))
+  });
+
+  await (
+    await releaseEscrow.reserveExactWithAuthorizationSplitImmediateFee(
+      releaseRequestIdHash,
+      releasePaymentIdHash,
+      releasePayer.address,
+      releasePayTo.address,
+      releaseProtocolFeeRecipient.address,
+      await releaseUsdc.getAddress(),
+      grossAmount,
+      sellerAmount,
+      protocolFeeAmount,
+      100,
+      releaseSignature.validAfter,
+      releaseSignature.validBefore,
+      releaseSignature.nonce,
+      releaseResultCommitment,
+      releaseExpiry,
+      releaseSignature.signature.v,
+      releaseSignature.signature.r,
+      releaseSignature.signature.s
+    )
+  ).wait();
+
+  await (
+    await releaseEscrow
+      .connect(releaseReleaser)
+      .releaseReservedPayment(releaseRequestIdHash, releasePaymentIdHash, releaseResultCommitment)
+  ).wait();
+
+  assert.equal(await releaseUsdc.balanceOf(releasePayTo.address), sellerAmount);
+  assert.equal(await releaseUsdc.balanceOf(releaseProtocolFeeRecipient.address), protocolFeeAmount);
+  assert.equal(await releaseUsdc.balanceOf(await releaseEscrow.getAddress()), 0n);
 });
 
 test("reserve-release escrow only allows the releaser role to create reservations", async () => {

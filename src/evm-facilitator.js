@@ -229,6 +229,58 @@ export const X402_RESERVE_RELEASE_ESCROW_ABI = [
   {
     type: "function",
     stateMutability: "nonpayable",
+    name: "reserveExactWithAuthorizationSplit",
+    inputs: [
+      { name: "requestIdHash", type: "bytes32" },
+      { name: "paymentIdHash", type: "bytes32" },
+      { name: "payer", type: "address" },
+      { name: "sellerPayTo", type: "address" },
+      { name: "protocolFeePayTo", type: "address" },
+      { name: "token", type: "address" },
+      { name: "grossAmount", type: "uint256" },
+      { name: "sellerAmount", type: "uint256" },
+      { name: "protocolFeeAmount", type: "uint256" },
+      { name: "feeBps", type: "uint16" },
+      { name: "validAfter", type: "uint256" },
+      { name: "validBefore", type: "uint256" },
+      { name: "nonce", type: "bytes32" },
+      { name: "resultCommitment", type: "bytes32" },
+      { name: "expiry", type: "uint256" },
+      { name: "v", type: "uint8" },
+      { name: "r", type: "bytes32" },
+      { name: "s", type: "bytes32" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    stateMutability: "nonpayable",
+    name: "reserveExactWithAuthorizationSplitImmediateFee",
+    inputs: [
+      { name: "requestIdHash", type: "bytes32" },
+      { name: "paymentIdHash", type: "bytes32" },
+      { name: "payer", type: "address" },
+      { name: "sellerPayTo", type: "address" },
+      { name: "protocolFeePayTo", type: "address" },
+      { name: "token", type: "address" },
+      { name: "grossAmount", type: "uint256" },
+      { name: "sellerAmount", type: "uint256" },
+      { name: "protocolFeeAmount", type: "uint256" },
+      { name: "feeBps", type: "uint16" },
+      { name: "validAfter", type: "uint256" },
+      { name: "validBefore", type: "uint256" },
+      { name: "nonce", type: "bytes32" },
+      { name: "resultCommitment", type: "bytes32" },
+      { name: "expiry", type: "uint256" },
+      { name: "v", type: "uint8" },
+      { name: "r", type: "bytes32" },
+      { name: "s", type: "bytes32" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    stateMutability: "nonpayable",
     name: "releaseReservedPayment",
     inputs: [
       { name: "requestIdHash", type: "bytes32" },
@@ -351,8 +403,39 @@ function isBytes32Hex(value) {
 function isReserveReleaseSettlementModel(value) {
   return (
     typeof value === "string" &&
-    value.endsWith("-reserve-release-v2")
+    (
+      value.endsWith("-reserve-release-v2") ||
+      value.endsWith("-reserve-release-v3") ||
+      value.endsWith("-reserve-release-v4")
+    )
   );
+}
+
+function assertOptionalStringMatch(label, provided, expected) {
+  if (typeof provided === "string" && provided.length > 0 && provided !== expected) {
+    throw new Error(`${label} must match the advertised reserve-release configuration.`);
+  }
+
+  return expected;
+}
+
+function assertOptionalAddressMatch(label, provided, expected) {
+  if (typeof provided === "string" && provided.length > 0 && provided.toLowerCase() !== expected.toLowerCase()) {
+    throw new Error(`${label} must match the advertised reserve-release configuration.`);
+  }
+
+  return expected;
+}
+
+function assertOptionalBigIntMatch(label, provided, expected) {
+  if (provided !== undefined && provided !== null) {
+    const actual = BigInt(assertNonEmptyString(label, provided));
+    if (actual !== expected) {
+      throw new Error(`${label} must match the advertised reserve-release fee split.`);
+    }
+  }
+
+  return expected;
 }
 
 function normalizeHostedRequest(input) {
@@ -411,13 +494,34 @@ function normalizeHostedExactPayment(input) {
   const reserveReleaseConfig = isRecord(accepted?.extra?.reserveRelease)
     ? accepted.extra.reserveRelease
     : null;
+  const feeSplitConfig = isRecord(accepted?.extra?.feeSplit)
+    ? accepted.extra.feeSplit
+    : null;
+  const hasFeeSplit = Boolean(
+    feeSplitConfig ||
+      settlement?.mode === "reserve-release-v3" ||
+      settlement?.mode === "reserve-release-v4"
+  );
   const reserveRelease =
-    isReserveReleaseSettlementModel(settlementModel) || settlement?.mode === "reserve-release-v2"
+    isReserveReleaseSettlementModel(settlementModel) ||
+    settlement?.mode === "reserve-release-v2" ||
+    settlement?.mode === "reserve-release-v3" ||
+    settlement?.mode === "reserve-release-v4"
       ? {
-          contractAddress: assertNonEmptyString(
-            "paymentPayload.payload.settlement.contractAddress",
-            settlement?.contractAddress ?? reserveReleaseConfig?.escrowContract
-          ),
+          contractAddress:
+            reserveReleaseConfig
+              ? assertOptionalAddressMatch(
+                  "paymentPayload.payload.settlement.contractAddress",
+                  settlement?.contractAddress,
+                  assertNonEmptyString(
+                    "paymentPayload.accepted.extra.reserveRelease.escrowContract",
+                    reserveReleaseConfig.escrowContract
+                  )
+                )
+              : assertNonEmptyString(
+                  "paymentPayload.payload.settlement.contractAddress",
+                  settlement?.contractAddress
+                ),
           requestIdHash: (() => {
             const value = assertNonEmptyString(
               "paymentPayload.payload.settlement.requestIdHash",
@@ -458,17 +562,95 @@ function normalizeHostedExactPayment(input) {
             )
           ),
           reserveMethod:
-            settlement?.reserveMethod ??
-            reserveReleaseConfig?.reserveMethod ??
-            "reserveExactWithAuthorization",
+            reserveReleaseConfig
+              ? assertOptionalStringMatch(
+                  "paymentPayload.payload.settlement.reserveMethod",
+                  settlement?.reserveMethod,
+                  reserveReleaseConfig?.reserveMethod ?? "reserveExactWithAuthorization"
+                )
+              : settlement?.reserveMethod ?? "reserveExactWithAuthorization",
           releaseMethod:
-            settlement?.releaseMethod ??
-            reserveReleaseConfig?.releaseMethod ??
-            "releaseReservedPayment",
+            reserveReleaseConfig
+              ? assertOptionalStringMatch(
+                  "paymentPayload.payload.settlement.releaseMethod",
+                  settlement?.releaseMethod,
+                  reserveReleaseConfig?.releaseMethod ?? "releaseReservedPayment"
+                )
+              : settlement?.releaseMethod ?? "releaseReservedPayment",
           refundMethod:
-            settlement?.refundMethod ??
-            reserveReleaseConfig?.refundMethod ??
-            "refundExpiredPayment"
+            reserveReleaseConfig
+              ? assertOptionalStringMatch(
+                  "paymentPayload.payload.settlement.refundMethod",
+                  settlement?.refundMethod,
+                  reserveReleaseConfig?.refundMethod ?? "refundExpiredPayment"
+                )
+              : settlement?.refundMethod ?? "refundExpiredPayment",
+          ...(hasFeeSplit
+            ? (() => {
+                if (!feeSplitConfig) {
+                  throw new Error("Hosted reserve-release fee rails require paymentPayload.accepted.extra.feeSplit.");
+                }
+
+                const feeBps = Number(feeSplitConfig?.feeBps ?? 0);
+                const grossAmount = acceptedAmount;
+                const protocolFeeAmount = (grossAmount * BigInt(feeBps)) / 10_000n;
+                const sellerAmount = grossAmount - protocolFeeAmount;
+                const sellerPayTo = assertNonEmptyString(
+                  "paymentPayload.accepted.extra.feeSplit.sellerPayTo",
+                  feeSplitConfig?.sellerPayTo ?? payTo
+                );
+                const protocolFeePayTo = assertNonEmptyString(
+                  "paymentPayload.accepted.extra.feeSplit.protocolFeePayTo",
+                  feeSplitConfig?.protocolFeePayTo
+                );
+                const feeSettlementMode = feeSplitConfig?.feeSettlementMode ?? "split-release-v1";
+
+                if (!Number.isInteger(feeBps) || feeBps <= 0 || feeBps >= 10_000) {
+                  throw new Error("paymentPayload.accepted.extra.feeSplit.feeBps must be an integer between 1 and 9999.");
+                }
+                if (sellerPayTo.toLowerCase() !== payTo.toLowerCase()) {
+                  throw new Error("paymentPayload.accepted.extra.feeSplit.sellerPayTo must match paymentPayload.accepted.payTo.");
+                }
+
+                assertOptionalStringMatch("paymentPayload.payload.settlement.mode", settlement?.mode, feeSettlementMode === "fee-on-reserve-v1" ? "reserve-release-v4" : "reserve-release-v3");
+                if (settlement?.feeBps !== undefined && Number(settlement.feeBps) !== feeBps) {
+                  throw new Error("paymentPayload.payload.settlement.feeBps must match the advertised reserve-release fee split.");
+                }
+                assertOptionalBigIntMatch("paymentPayload.payload.settlement.grossAmount", settlement?.grossAmount, grossAmount);
+                assertOptionalBigIntMatch("paymentPayload.payload.settlement.sellerAmount", settlement?.sellerAmount, sellerAmount);
+                assertOptionalBigIntMatch(
+                  "paymentPayload.payload.settlement.protocolFeeAmount",
+                  settlement?.protocolFeeAmount,
+                  protocolFeeAmount
+                );
+                assertOptionalAddressMatch("paymentPayload.payload.settlement.sellerPayTo", settlement?.sellerPayTo, sellerPayTo);
+                assertOptionalAddressMatch(
+                  "paymentPayload.payload.settlement.protocolFeePayTo",
+                  settlement?.protocolFeePayTo,
+                  protocolFeePayTo
+                );
+                assertOptionalStringMatch(
+                  "paymentPayload.payload.settlement.feeSettlementMode",
+                  settlement?.feeSettlementMode,
+                  feeSettlementMode
+                );
+
+                return {
+                  feeSplit: {
+                    feeBps,
+                    grossAmount,
+                    sellerAmount,
+                    protocolFeeAmount,
+                    sellerPayTo,
+                    protocolFeePayTo,
+                    feeSettlementMode,
+                    ...(typeof feeSplitConfig?.feePolicyDigest === "string" && feeSplitConfig.feePolicyDigest.length > 0
+                      ? { feePolicyDigest: feeSplitConfig.feePolicyDigest }
+                      : {})
+                  }
+                };
+              })()
+            : {})
         }
       : null;
   const authorizationTarget = reserveRelease?.contractAddress ?? payTo;
@@ -594,6 +776,18 @@ function verificationSummary(payment, clients, input) {
     relayer: clients.account.address,
     authorizationUsed: input.authorizationUsed,
     balance: input.balance.toString(),
+    ...(payment.reserveRelease?.feeSplit
+      ? {
+          feeSplit: {
+            feeBps: payment.reserveRelease.feeSplit.feeBps,
+            grossAmount: payment.reserveRelease.feeSplit.grossAmount.toString(),
+            sellerAmount: payment.reserveRelease.feeSplit.sellerAmount.toString(),
+            protocolFeeAmount: payment.reserveRelease.feeSplit.protocolFeeAmount.toString(),
+            sellerPayTo: payment.reserveRelease.feeSplit.sellerPayTo,
+            protocolFeePayTo: payment.reserveRelease.feeSplit.protocolFeePayTo
+          }
+        }
+      : {}),
     ...(input.invalidReason ? { invalidReason: input.invalidReason, error: input.invalidReason } : {})
   };
 }
@@ -670,22 +864,43 @@ async function settleHostedPayment(clients, input) {
           address: payment.reserveRelease.contractAddress,
           abi: X402_RESERVE_RELEASE_ESCROW_ABI,
           functionName: payment.reserveRelease.reserveMethod,
-          args: [
-            payment.reserveRelease.requestIdHash,
-            payment.reserveRelease.paymentIdHash,
-            payment.authorization.from,
-            payment.payTo,
-            payment.tokenAddress,
-            payment.authorization.value,
-            payment.authorization.validAfter,
-            payment.authorization.validBefore,
-            payment.authorization.nonce,
-            payment.reserveRelease.resultCommitment,
-            payment.reserveRelease.reserveExpiryUnix,
-            v,
-            r,
-            s
-          ]
+          args: payment.reserveRelease.feeSplit
+            ? [
+                payment.reserveRelease.requestIdHash,
+                payment.reserveRelease.paymentIdHash,
+                payment.authorization.from,
+                payment.reserveRelease.feeSplit.sellerPayTo,
+                payment.reserveRelease.feeSplit.protocolFeePayTo,
+                payment.tokenAddress,
+                payment.reserveRelease.feeSplit.grossAmount,
+                payment.reserveRelease.feeSplit.sellerAmount,
+                payment.reserveRelease.feeSplit.protocolFeeAmount,
+                payment.reserveRelease.feeSplit.feeBps,
+                payment.authorization.validAfter,
+                payment.authorization.validBefore,
+                payment.authorization.nonce,
+                payment.reserveRelease.resultCommitment,
+                payment.reserveRelease.reserveExpiryUnix,
+                v,
+                r,
+                s
+              ]
+            : [
+                payment.reserveRelease.requestIdHash,
+                payment.reserveRelease.paymentIdHash,
+                payment.authorization.from,
+                payment.payTo,
+                payment.tokenAddress,
+                payment.authorization.value,
+                payment.authorization.validAfter,
+                payment.authorization.validBefore,
+                payment.authorization.nonce,
+                payment.reserveRelease.resultCommitment,
+                payment.reserveRelease.reserveExpiryUnix,
+                v,
+                r,
+                s
+              ]
         })
       : await clients.walletClient.writeContract({
           account: clients.account,
@@ -727,6 +942,18 @@ async function settleHostedPayment(clients, input) {
                 requestIdHash: payment.reserveRelease.requestIdHash,
                 paymentIdHash: payment.reserveRelease.paymentIdHash,
                 resultCommitment: payment.reserveRelease.resultCommitment
+              }
+            }
+          : {}),
+        ...(payment.reserveRelease?.feeSplit
+          ? {
+              feeSplit: {
+                feeBps: payment.reserveRelease.feeSplit.feeBps,
+                grossAmount: payment.reserveRelease.feeSplit.grossAmount.toString(),
+                sellerAmount: payment.reserveRelease.feeSplit.sellerAmount.toString(),
+                protocolFeeAmount: payment.reserveRelease.feeSplit.protocolFeeAmount.toString(),
+                sellerPayTo: payment.reserveRelease.feeSplit.sellerPayTo,
+                protocolFeePayTo: payment.reserveRelease.feeSplit.protocolFeePayTo
               }
             }
           : {}),

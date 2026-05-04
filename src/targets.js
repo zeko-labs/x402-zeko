@@ -72,6 +72,28 @@ function buildReserveReleaseRail(target, input) {
     throw new Error("escrowContract is required for the reserve-release rail.");
   }
 
+  const hasProtocolFeePayTo =
+    typeof input?.protocolFeePayTo === "string" && input.protocolFeePayTo.length > 0;
+  const hasFeeExtras =
+    input?.feeBps !== undefined ||
+    (typeof input?.feeSettlementMode === "string" && input.feeSettlementMode.length > 0) ||
+    (typeof input?.feePolicyDigest === "string" && input.feePolicyDigest.length > 0);
+
+  if (hasFeeExtras && !hasProtocolFeePayTo) {
+    throw new Error("protocolFeePayTo is required when configuring a reserve-release fee split.");
+  }
+
+  const feeBps =
+    hasProtocolFeePayTo
+      ? (() => {
+          if (!Number.isInteger(input?.feeBps) || input.feeBps <= 0 || input.feeBps >= 10_000) {
+            throw new Error("feeBps must be an integer between 1 and 9999 for reserve-release fee rails.");
+          }
+
+          return input.feeBps;
+        })()
+      : null;
+
   return buildEvmRail({
     networkId: target.networkId,
     amount: input.amount,
@@ -100,6 +122,20 @@ function buildReserveReleaseRail(target, input) {
           resultCommitmentType: input.resultCommitmentType ?? "sha256-canonical",
           ...(typeof input.expirySeconds === "number" ? { expirySeconds: input.expirySeconds } : {})
         },
+        ...(typeof input.protocolFeePayTo === "string" && input.protocolFeePayTo.length > 0
+          ? {
+              feeSplit: {
+                version: "protocol-owner-fee-v1",
+                feeBps,
+                sellerPayTo: input.payTo,
+                protocolFeePayTo: input.protocolFeePayTo,
+                feeSettlementMode: input.feeSettlementMode ?? "split-release-v1",
+                ...(typeof input.feePolicyDigest === "string" && input.feePolicyDigest.length > 0
+                  ? { feePolicyDigest: input.feePolicyDigest }
+                  : {})
+              }
+            }
+          : {}),
         ...(typeof input.defaultFacilitator === "string" && input.defaultFacilitator.length > 0
           ? { defaultFacilitator: input.defaultFacilitator }
           : {}),
@@ -206,6 +242,94 @@ export function buildEthereumMainnetUsdcReserveReleaseRail(input) {
     description:
       input.description ??
       "Ethereum mainnet USDC rail using reserve-now, release-on-proof settlement.",
+    defaultFacilitator: input.defaultFacilitator ?? "self-hosted",
+    requiresCustomFacilitator:
+      input.requiresCustomFacilitator ??
+      !(typeof input.facilitatorUrl === "string" && input.facilitatorUrl.length > 0)
+  });
+}
+
+export function buildBaseMainnetUsdcReserveReleaseFeeRail(input) {
+  if (typeof input?.payTo !== "string" || input.payTo.length === 0) {
+    throw new Error("payTo is required for the Base USDC reserve-release fee rail.");
+  }
+
+  if (typeof input?.protocolFeePayTo !== "string" || input.protocolFeePayTo.length === 0) {
+    throw new Error("protocolFeePayTo is required for the Base USDC reserve-release fee rail.");
+  }
+
+  return buildReserveReleaseRail(BASE_MAINNET_USDC, {
+    ...input,
+    settlementModel: input.settlementModel ?? "x402-base-usdc-reserve-release-v3",
+    reserveMethod: input.reserveMethod ?? "reserveExactWithAuthorizationSplit",
+    description:
+      input.description ??
+      "Base mainnet USDC rail using reserve-now, release-on-proof settlement with a protocol owner fee split.",
+    defaultFacilitator: input.defaultFacilitator ?? "self-hosted"
+  });
+}
+
+export function buildEthereumMainnetUsdcReserveReleaseFeeRail(input) {
+  if (typeof input?.payTo !== "string" || input.payTo.length === 0) {
+    throw new Error("payTo is required for the Ethereum USDC reserve-release fee rail.");
+  }
+
+  if (typeof input?.protocolFeePayTo !== "string" || input.protocolFeePayTo.length === 0) {
+    throw new Error("protocolFeePayTo is required for the Ethereum USDC reserve-release fee rail.");
+  }
+
+  return buildReserveReleaseRail(ETHEREUM_MAINNET_USDC, {
+    ...input,
+    settlementModel: input.settlementModel ?? "x402-ethereum-mainnet-usdc-reserve-release-v3",
+    reserveMethod: input.reserveMethod ?? "reserveExactWithAuthorizationSplit",
+    description:
+      input.description ??
+      "Ethereum mainnet USDC rail using reserve-now, release-on-proof settlement with a protocol owner fee split.",
+    defaultFacilitator: input.defaultFacilitator ?? "self-hosted",
+    requiresCustomFacilitator:
+      input.requiresCustomFacilitator ??
+      !(typeof input.facilitatorUrl === "string" && input.facilitatorUrl.length > 0)
+  });
+}
+
+export function buildBaseMainnetUsdcReserveReleaseFeeOnReserveRail(input) {
+  if (typeof input?.payTo !== "string" || input.payTo.length === 0) {
+    throw new Error("payTo is required for the Base USDC reserve-release fee-on-reserve rail.");
+  }
+
+  if (typeof input?.protocolFeePayTo !== "string" || input.protocolFeePayTo.length === 0) {
+    throw new Error("protocolFeePayTo is required for the Base USDC reserve-release fee-on-reserve rail.");
+  }
+
+  return buildReserveReleaseRail(BASE_MAINNET_USDC, {
+    ...input,
+    settlementModel: input.settlementModel ?? "x402-base-usdc-reserve-release-v4",
+    reserveMethod: input.reserveMethod ?? "reserveExactWithAuthorizationSplitImmediateFee",
+    feeSettlementMode: input.feeSettlementMode ?? "fee-on-reserve-v1",
+    description:
+      input.description ??
+      "Base mainnet USDC rail using reserve-now, release-on-proof seller settlement with the protocol fee collected at reservation time.",
+    defaultFacilitator: input.defaultFacilitator ?? "self-hosted"
+  });
+}
+
+export function buildEthereumMainnetUsdcReserveReleaseFeeOnReserveRail(input) {
+  if (typeof input?.payTo !== "string" || input.payTo.length === 0) {
+    throw new Error("payTo is required for the Ethereum USDC reserve-release fee-on-reserve rail.");
+  }
+
+  if (typeof input?.protocolFeePayTo !== "string" || input.protocolFeePayTo.length === 0) {
+    throw new Error("protocolFeePayTo is required for the Ethereum USDC reserve-release fee-on-reserve rail.");
+  }
+
+  return buildReserveReleaseRail(ETHEREUM_MAINNET_USDC, {
+    ...input,
+    settlementModel: input.settlementModel ?? "x402-ethereum-mainnet-usdc-reserve-release-v4",
+    reserveMethod: input.reserveMethod ?? "reserveExactWithAuthorizationSplitImmediateFee",
+    feeSettlementMode: input.feeSettlementMode ?? "fee-on-reserve-v1",
+    description:
+      input.description ??
+      "Ethereum mainnet USDC rail using reserve-now, release-on-proof seller settlement with the protocol fee collected at reservation time.",
     defaultFacilitator: input.defaultFacilitator ?? "self-hosted",
     requiresCustomFacilitator:
       input.requiresCustomFacilitator ??
