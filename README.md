@@ -1,13 +1,13 @@
 # zeko-x402
 
-`zeko-x402` is a narrow x402 toolkit for apps that want standard x402 payments on EVM and optional proof-aware execution on Zeko.
+`zeko-x402` is a narrow x402 toolkit for apps that want standard x402 payments on EVM and proof-aware execution on Zeko.
 
 It is the protocol and settlement layer, not the app layer.
 
 ## What's In This Repo
 
 - Core x402 helpers: `402 Payment Required`, payment headers, rails, payloads, receipts
-- EVM rails: Base and Ethereum USDC exact settlement plus reserve-release flows
+- EVM rails: Ethereum and Base USDC exact settlement plus reserve-release flows
 - Zeko rail: zkApp settlement helpers, witness store/service, and client helpers
 - Self-hosted facilitator: local or hosted `/verify` and `/settle` service for EVM rails
 - EVM contracts: reserve-release escrow contracts and Sepolia deploy/smoke scripts
@@ -25,20 +25,15 @@ pnpm test
 
 ### 1. Start the EVM facilitator
 
-Minimum Base config:
+Enable one or both EVM rails:
 
 ```bash
-X402_BASE_RPC_URL=https://mainnet.base.org
 X402_EVM_RELAYER_PRIVATE_KEY=0x...
-X402_BASE_PAY_TO=0x...
-pnpm evm:facilitator
-```
-
-Optional Ethereum on the same service:
-
-```bash
 X402_ETHEREUM_RPC_URL=https://ethereum.publicnode.com
 X402_ETHEREUM_PAY_TO=0x...
+X402_BASE_RPC_URL=https://mainnet.base.org
+X402_BASE_PAY_TO=0x...
+pnpm evm:facilitator
 ```
 
 The facilitator listens on `127.0.0.1:7422` by default. Set `X402_EVM_FACILITATOR_HOST=0.0.0.0` for hosted deploys. A simple Render config is included in [`render.yaml`](/Users/evankereiakes/Documents/Codex/zeko-x402/render.yaml).
@@ -69,7 +64,7 @@ pnpm doctor:rails
 
 ## What Devs Need To Know
 
-- Base is the default EVM rail. Ethereum is supported too.
+- Ethereum and Base are first-class EVM rails.
 - x402 stays standard at the payment layer. Zeko is the upgrade layer for privacy, proofs, and release logic.
 - This repo is reusable infra: rails, intents, facilitator, contracts, and smokes.
 - Use separate relayer and `payTo` wallets in real deployments.
@@ -85,7 +80,7 @@ pnpm doctor:rails
 - `pnpm build:zkapp`: compile the Zeko zkApp helpers
 - `pnpm deploy:base-sepolia-escrow`: deploy Base Sepolia escrow
 - `pnpm deploy:ethereum-sepolia-escrow`: deploy Ethereum Sepolia escrow
-- `pnpm smoke:multirail-offer`: build a single `402` offer for Base, Ethereum, and Zeko
+- `pnpm smoke:multirail-offer`: build a single `402` offer for Ethereum, Base, and Zeko
 
 ## Docs
 

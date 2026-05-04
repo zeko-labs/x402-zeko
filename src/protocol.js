@@ -13,8 +13,8 @@ export const X402_SERVICE_FEATURES = [
   "duplicate-settlement-protection",
   "proof-bundle-attestation",
   "programmable-privacy",
-  "optional-evm-settlement",
-  "optional-zeko-settlement",
+  "evm-settlement",
+  "zeko-settlement",
   "signed-authorization-payloads"
 ];
 
