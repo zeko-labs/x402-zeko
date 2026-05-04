@@ -2,7 +2,7 @@
 
 This doc describes the app-level registration flow for a hosted service built on top of `zeko-x402`.
 
-It is intentionally generic. The first use case in mind is a private workflow or agent that runs on Zeko while accepting x402 payments on Base or Ethereum, but the onboarding model here should work for any app-specific adapter repo.
+It is intentionally generic. The first use case in mind is a private workflow or agent that runs on Zeko while accepting x402 payments on Ethereum or Base, but the onboarding model here should work for any app-specific adapter repo.
 
 ## Goal
 

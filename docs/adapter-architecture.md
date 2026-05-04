@@ -2,19 +2,18 @@
 
 This doc is the handoff for a separate app or agent adapter repo that wants to monetize private work through `zeko-x402`.
 
-The first use case in mind is a private agent running on Zeko infrastructure while charging on Base or Ethereum mainnet, but the adapter described here should stay app-specific and live outside this repo.
+The first use case in mind is a private agent running on Zeko infrastructure while charging on Ethereum or Base mainnet, but the adapter described here should stay app-specific and live outside this repo.
 
 ## Recommended v1
 
 Ship the first adapter around one simple promise:
 
 - the app runs privately on Zeko
-- the payment settles on Base by default
-- Ethereum mainnet is optional
+- the payment settles on Ethereum or Base
 - the app developer brings `payTo` and relayer credentials
 - `zeko-x402` handles x402 payment negotiation and settlement rails
 
-That means the adapter does **not** need to expose Zeko-native settlement on day one. The initial unlock is letting a Zeko-hosted workflow get paid through the default EVM rails people already expect.
+That means the initial adapter can focus on Ethereum and Base while still requiring Zeko as the work layer. The initial unlock is letting a Zeko-hosted workflow get paid through the EVM rails people already expect.
 
 ## Boundary
 
@@ -25,8 +24,8 @@ Keep the split strict.
 Use this repo for:
 
 - x402 headers, payloads, and protocol helpers
-- Base and Ethereum rail builders
-- optional Zeko rail builders
+- Ethereum and Base rail builders
+- Zeko rail builders
 - facilitator clients and self-hosted EVM relayer behavior
 - escrow inspection helpers for hosted dedicated-escrow registration
 - payment verification and settlement receipts
@@ -76,8 +75,7 @@ The separate adapter repo should implement this flow.
 1. Receive a request for private work.
 2. Resolve the developer or tenant account.
 3. Resolve the configured EVM rails for that tenant:
-   - Base first
-   - Ethereum optional
+   - Ethereum and Base
 4. Build one standard `402 Payment Required` response with multiple `accepts` options.
 5. Let the client choose a rail and submit an x402 payment payload.
 6. Verify and settle that payload through `zeko-x402`.
@@ -101,10 +99,10 @@ Store:
 - `tenantId`
 - `apiKey`
 - `defaultNetwork`
+- `ethereum.payTo`
+- `ethereum.relayer`
 - `base.payTo`
 - `base.relayer`
-- optional `ethereum.payTo`
-- optional `ethereum.relayer`
 - allowed rails
 - price policy
 
@@ -169,9 +167,9 @@ sequenceDiagram
 
 For the first adapter release:
 
-- Base mainnet USDC should be the default advertised rail
-- Ethereum mainnet USDC should be opt-in
-- Zeko-native settlement should stay optional and behind a feature flag
+- Ethereum mainnet USDC and Base mainnet USDC should both be first-class advertised rails
+- Zeko-backed execution remains required
+- Zeko-native settlement can be introduced behind a feature flag when the product wants that additional rail
 
 That keeps the first shipping experience familiar:
 
@@ -195,16 +193,20 @@ import {
 
 export async function handlePaidWork(request, tenant) {
   const rails = [
-    buildBaseMainnetUsdcRail({
-      amount: tenant.pricing.baseAmount,
-      payTo: tenant.base.payTo
-    }),
     ...(tenant.ethereum?.enabled
       ? [
           buildEthereumMainnetUsdcRail({
             amount: tenant.pricing.ethereumAmount,
             payTo: tenant.ethereum.payTo,
             facilitatorUrl: tenant.ethereum.facilitatorUrl
+          })
+        ]
+      : []),
+    ...(tenant.base?.enabled
+      ? [
+          buildBaseMainnetUsdcRail({
+            amount: tenant.pricing.baseAmount,
+            payTo: tenant.base.payTo
           })
         ]
       : [])
@@ -250,7 +252,7 @@ The separate repo should implement:
 2. `payTo` and relayer verification
 3. one paid work endpoint
 4. one dev-facing wrapper like `withX402(...)`
-5. one quickstart that shows Base-first monetization for a private Zeko-hosted workflow
+5. one quickstart that shows Ethereum- and Base-backed monetization for a private Zeko-hosted workflow
 
 That is enough for the first real developer release.
 

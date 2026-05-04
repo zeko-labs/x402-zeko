@@ -204,7 +204,7 @@ export function buildPaymentRequired(input) {
     resource: descriptor.resourceUrl,
     description:
       input.description ??
-      "Get a Zeko resource through x402 with optional Zeko-native or EVM settlement.",
+      "Get a Zeko resource through x402 with Zeko-native and EVM settlement rails.",
     mimeType: "application/json",
     seller: {
       serviceId: input.serviceId

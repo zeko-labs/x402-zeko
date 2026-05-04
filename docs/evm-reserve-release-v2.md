@@ -1,6 +1,6 @@
 # EVM Reserve-Release v2
 
-`zeko-x402` now includes a narrowly scoped EVM v2 path for proof-gated settlement on EVM rails, with Base as the first deployed and proven path.
+`zeko-x402` now includes a narrowly scoped EVM v2 path for proof-gated settlement on EVM rails, with Ethereum and Base as first-class rails.
 
 This path exists because a plain EIP-3009 payment authorization is not enough to guarantee payment after expensive private work has already run. In v1, the safe default is still:
 
@@ -19,8 +19,8 @@ The v2 path introduces a stronger option:
 This is intentionally narrow:
 
 - canonical USDC only
-- Base mainnet and Ethereum mainnet codepath support
-- Base-first live rollout and testnet deployment path today
+- Ethereum mainnet and Base mainnet codepath support
+- Ethereum Sepolia and Base Sepolia deployment and smoke paths in this repo
 - standard x402 front door still unchanged
 - self-hosted or custom-facilitator path, not default CDP hosted behavior
 
@@ -110,7 +110,7 @@ The self-hosted EVM facilitator now supports two kinds of EVM paths:
 - `payTo` is recorded as the intended recipient
 - later release or refund happens through separate contract calls
 
-That means v2 keeps x402 recognizable while changing the settlement primitive under the hood. Today the live deployment and smoke path in this repo are Base-first, but the codebase now exposes the same reserve-release helpers for Ethereum mainnet too.
+That means v2 keeps x402 recognizable while changing the settlement primitive under the hood. The codebase exposes the same reserve-release helpers for Ethereum mainnet and Base mainnet, and this repo includes Sepolia deploy and smoke paths for both.
 
 ## Suggested contract surface
 
@@ -120,7 +120,7 @@ The facilitator expects an escrow contract with a surface like:
 - `releaseReservedPayment(...)`
 - `refundExpiredPayment(...)`
 
-This repo now includes that minimal Base-first contract directly:
+This repo now includes that minimal contract directly:
 
 - `contracts-evm/X402BaseUSDCReserveEscrow.sol`
 
@@ -324,4 +324,4 @@ This v2 is the bridge between:
 - `v1`: pay first, then run work
 - `future`: pay for verified result
 
-It gives Base-first services a more credible proof-gated payment model without changing the HTTP/x402 front door and without pretending that a plain offchain authorization already locks funds.
+It gives services a more credible proof-gated payment model without changing the HTTP/x402 front door and without pretending that a plain offchain authorization already locks funds.

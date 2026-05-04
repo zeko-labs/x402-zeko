@@ -36,7 +36,7 @@ Use a hosted facilitator when the network you want is already supported by your 
 
 Use the self-hosted facilitator in this repo when:
 
-- you want one operator-controlled path for Base and Ethereum
+- you want one operator-controlled path for Ethereum and Base
 - you need Ethereum mainnet today without waiting for a managed provider
 - you want Zeko and EVM rails under one deployment boundary
 
