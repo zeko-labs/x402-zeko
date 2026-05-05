@@ -26,6 +26,24 @@ function assertNonEmptyString(label, value) {
   return value;
 }
 
+function parseNonNegativeInteger(value, fallback) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function parsePositiveInteger(value, fallback) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 function normalizePrivateKey(value) {
   return value.startsWith("0x") ? value : `0x${value}`;
 }
@@ -103,6 +121,70 @@ function getChain(networkId) {
   }
 
   return undefined;
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function transientRpcMessage(error) {
+  if (error instanceof Error) {
+    return [
+      error.message,
+      error.cause instanceof Error ? error.cause.message : "",
+      typeof error.details === "string" ? error.details : "",
+      typeof error.shortMessage === "string" ? error.shortMessage : ""
+    ]
+      .filter(Boolean)
+      .join("\n")
+      .toLowerCase();
+  }
+
+  return String(error ?? "").toLowerCase();
+}
+
+function isTransientRpcError(error) {
+  const message = transientRpcMessage(error);
+  return (
+    message.includes("over rate limit") ||
+    message.includes("rate limit") ||
+    message.includes("too many requests") ||
+    message.includes("429") ||
+    message.includes("timeout") ||
+    message.includes("timed out") ||
+    message.includes("temporarily unavailable") ||
+    message.includes("bad gateway") ||
+    message.includes("service unavailable") ||
+    message.includes("gateway timeout") ||
+    message.includes("econnreset") ||
+    message.includes("etimedout") ||
+    message.includes("fetch failed") ||
+    message.includes("network error") ||
+    message.includes("502") ||
+    message.includes("503") ||
+    message.includes("504")
+  );
+}
+
+async function retryTransientRpc(clients, label, fn) {
+  let lastError;
+
+  for (let attempt = 0; attempt <= clients.rpcRetryCount; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+
+      if (!isTransientRpcError(error) || attempt >= clients.rpcRetryCount) {
+        throw error;
+      }
+
+      const delayMs = clients.rpcRetryDelayMs * 2 ** attempt;
+      await wait(delayMs);
+    }
+  }
+
+  throw lastError ?? new Error(`${label} failed.`);
 }
 
 function transferWithAuthorizationTypes() {
@@ -740,10 +822,27 @@ function makeClients(config) {
   );
   const chain = getChain(networkId);
   const account = privateKeyToAccount(relayerPrivateKey);
+  const rpcRetryCount = parseNonNegativeInteger(
+    config?.rpcRetryCount ?? process.env.X402_EVM_RPC_RETRY_COUNT,
+    2
+  );
+  const rpcRetryDelayMs = parsePositiveInteger(
+    config?.rpcRetryDelayMs ?? process.env.X402_EVM_RPC_RETRY_DELAY_MS,
+    250
+  );
+  const rpcTimeoutMs = parsePositiveInteger(
+    config?.rpcTimeoutMs ?? process.env.X402_EVM_RPC_TIMEOUT_MS,
+    10_000
+  );
   const transport =
     rpcUrls.length === 1
-      ? http(rpcUrl)
-      : fallback(rpcUrls.map((url) => http(url)));
+      ? http(rpcUrl, { retryCount: rpcRetryCount, retryDelay: rpcRetryDelayMs, timeout: rpcTimeoutMs })
+      : fallback(
+          rpcUrls.map((url) =>
+            http(url, { retryCount: rpcRetryCount, retryDelay: rpcRetryDelayMs, timeout: rpcTimeoutMs })
+          ),
+          { retryCount: rpcRetryCount, retryDelay: rpcRetryDelayMs }
+        );
   const publicClient =
     config?.publicClient ??
     createPublicClient({
@@ -763,6 +862,9 @@ function makeClients(config) {
     chain,
     rpcUrl,
     rpcUrls,
+    rpcRetryCount,
+    rpcRetryDelayMs,
+    rpcTimeoutMs,
     account,
     publicClient,
     walletClient
@@ -770,20 +872,24 @@ function makeClients(config) {
 }
 
 async function readAuthorizationState(clients, payment) {
-  return await clients.publicClient.readContract({
-    address: payment.tokenAddress,
-    abi: USDC_EIP3009_ABI,
-    functionName: "authorizationState",
-    args: [payment.authorization.from, payment.authorization.nonce]
+  return await retryTransientRpc(clients, "authorizationState", async () => {
+    return await clients.publicClient.readContract({
+      address: payment.tokenAddress,
+      abi: USDC_EIP3009_ABI,
+      functionName: "authorizationState",
+      args: [payment.authorization.from, payment.authorization.nonce]
+    });
   });
 }
 
 async function readBalance(clients, payment) {
-  return await clients.publicClient.readContract({
-    address: payment.tokenAddress,
-    abi: USDC_EIP3009_ABI,
-    functionName: "balanceOf",
-    args: [payment.authorization.from]
+  return await retryTransientRpc(clients, "balanceOf", async () => {
+    return await clients.publicClient.readContract({
+      address: payment.tokenAddress,
+      abi: USDC_EIP3009_ABI,
+      functionName: "balanceOf",
+      args: [payment.authorization.from]
+    });
   });
 }
 
@@ -945,7 +1051,9 @@ async function settleHostedPayment(clients, input) {
         });
     const receipt =
       typeof clients.publicClient.waitForTransactionReceipt === "function"
-        ? await clients.publicClient.waitForTransactionReceipt({ hash: transactionHash })
+        ? await retryTransientRpc(clients, "waitForTransactionReceipt", async () => {
+            return await clients.publicClient.waitForTransactionReceipt({ hash: transactionHash });
+          })
         : null;
 
       return {
@@ -1082,6 +1190,9 @@ export class SelfHostedEvmFacilitator {
         networkId: entry.networkId,
         rpcUrl: redactRpcUrl(entry.rpcUrl),
         rpcUrls: entry.rpcUrls.map(redactRpcUrl),
+        rpcRetryCount: entry.rpcRetryCount,
+        rpcRetryDelayMs: entry.rpcRetryDelayMs,
+        rpcTimeoutMs: entry.rpcTimeoutMs,
         relayer: entry.account.address
       }))
     };

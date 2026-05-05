@@ -22,6 +22,16 @@ function envFlagDisabled(name) {
   return value === "0" || value === "false" || value === "no";
 }
 
+function readPositiveIntEnv(name, fallback) {
+  const parsed = Number(readOptionalEnv(name));
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function readNonNegativeIntEnv(name, fallback) {
+  const parsed = Number(readOptionalEnv(name));
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 function readOptionalEnvList(names) {
   for (const name of names) {
     const value = readOptionalEnv(name);
@@ -137,6 +147,11 @@ function buildNetworkConfigs() {
     "X402_EVM_RELAYER_PRIVATE_KEY",
     readOptionalEnv("EVM_RELAYER_PRIVATE_KEY")
   );
+  const rpcRuntimeConfig = {
+    rpcRetryCount: readNonNegativeIntEnv("X402_EVM_RPC_RETRY_COUNT", 2),
+    rpcRetryDelayMs: readPositiveIntEnv("X402_EVM_RPC_RETRY_DELAY_MS", 250),
+    rpcTimeoutMs: readPositiveIntEnv("X402_EVM_RPC_TIMEOUT_MS", 10_000)
+  };
   const configs = [];
 
   const baseRpcUrls = readOptionalEnvList(["X402_BASE_RPC_URLS", "X402_BASE_RPC_URL", "BASE_RPC_URL"]);
@@ -150,7 +165,8 @@ function buildNetworkConfigs() {
       networkId: "eip155:8453",
       rpcUrl: baseRpcUrls[0],
       rpcUrls: baseRpcUrls,
-      relayerPrivateKey: baseRelayerPrivateKey
+      relayerPrivateKey: baseRelayerPrivateKey,
+      ...rpcRuntimeConfig
     });
   }
 
@@ -169,7 +185,8 @@ function buildNetworkConfigs() {
       networkId: "eip155:1",
       rpcUrl: ethereumRpcUrls[0],
       rpcUrls: ethereumRpcUrls,
-      relayerPrivateKey: ethereumRelayerPrivateKey
+      relayerPrivateKey: ethereumRelayerPrivateKey,
+      ...rpcRuntimeConfig
     });
   }
 
@@ -193,7 +210,8 @@ function buildNetworkConfigs() {
       networkId: selectedNetworkId,
       rpcUrl: genericRpcUrls[0],
       rpcUrls: genericRpcUrls,
-      relayerPrivateKey: genericRelayerPrivateKey
+      relayerPrivateKey: genericRelayerPrivateKey,
+      ...rpcRuntimeConfig
     }
   ];
 }
@@ -226,7 +244,10 @@ async function main() {
           networkId: network.networkId,
           rpcUrl: redactRpcUrl(network.rpcUrl),
           rpcUrls: (network.rpcUrls ?? [network.rpcUrl]).map(redactRpcUrl),
-          rpcPolicy: describeRpcPolicy(network)
+          rpcPolicy: describeRpcPolicy(network),
+          rpcRetryCount: network.rpcRetryCount,
+          rpcRetryDelayMs: network.rpcRetryDelayMs,
+          rpcTimeoutMs: network.rpcTimeoutMs
         }))
       },
       null,

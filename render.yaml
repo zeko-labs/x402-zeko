@@ -14,6 +14,12 @@ services:
         value: 10000
       - key: X402_EVM_NETWORK
         value: base
+      - key: X402_EVM_RPC_RETRY_COUNT
+        value: 2
+      - key: X402_EVM_RPC_RETRY_DELAY_MS
+        value: 250
+      - key: X402_EVM_RPC_TIMEOUT_MS
+        value: 10000
       - key: X402_BASE_RPC_URLS
         sync: false
       - key: X402_BASE_RELAYER_PRIVATE_KEY

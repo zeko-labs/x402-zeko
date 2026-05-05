@@ -387,6 +387,64 @@ test("self-hosted facilitator surfaces decoded escrow custom errors on settlemen
   assert.match(settlement.errorReason, /ReservationExpired/);
 });
 
+test("self-hosted facilitator retries transient read-side RPC failures", async () => {
+  let balanceReads = 0;
+  const mock = createMockClients();
+  const publicClient = {
+    ...mock.publicClient,
+    readContract: async ({ functionName }) => {
+      if (functionName === "authorizationState") {
+        return false;
+      }
+
+      if (functionName === "balanceOf") {
+        balanceReads += 1;
+        if (balanceReads === 1) {
+          throw new Error("over rate limit");
+        }
+        return 900000n;
+      }
+
+      throw new Error(`Unexpected readContract function: ${functionName}`);
+    }
+  };
+  const rail = buildBaseMainnetUsdcRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    amount: "0.50"
+  });
+  const intent = buildBaseUsdcExactEip3009Intent({
+    from: privateKeyToAccount(BUYER_PRIVATE_KEY).address,
+    to: rail.payTo,
+    amount: rail.amount
+  });
+  const { requirements, payload } = await buildSignedPayment({
+    rail,
+    intent,
+    paymentId: "pay_self_hosted_retry"
+  });
+  const facilitator = new SelfHostedEvmFacilitator({
+    networks: [
+      {
+        networkId: "eip155:8453",
+        rpcUrl: "https://base.example",
+        relayerPrivateKey: RELAYER_PRIVATE_KEY,
+        publicClient,
+        walletClient: mock.walletClient,
+        rpcRetryCount: 1,
+        rpcRetryDelayMs: 1
+      }
+    ]
+  });
+
+  const verification = await facilitator.verify({
+    paymentPayload: payload,
+    paymentRequirements: requirements
+  });
+
+  assert.equal(verification.isValid, true);
+  assert.equal(balanceReads, 2);
+});
+
 test("self-hosted facilitator reports configured RPC failover URLs without exposing API keys", async () => {
   const mock = createMockClients();
   const facilitator = new SelfHostedEvmFacilitator({

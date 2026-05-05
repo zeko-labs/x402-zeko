@@ -40,6 +40,8 @@ The facilitator listens on `127.0.0.1:7422` by default. Set `X402_EVM_FACILITATO
 
 Self-hosted means you run the verifier and relayer; it does not remove the need for an EVM RPC connection. The relayer still needs RPC access to read USDC balances/nonces and broadcast `transferWithAuthorization(...)`. Hosted production should use `X402_BASE_RPC_URLS` or `X402_ETHEREUM_RPC_URLS` with a private/dedicated primary RPC and optional public fallback.
 
+The facilitator retries transient read-side RPC failures and receipt polling, but it does not blindly retry transaction broadcasts after an ambiguous send response.
+
 ### 2. Run smokes
 
 Smoke commands use live rails when funded keys are configured. EVM smokes need `X402_EVM_PRIVATE_KEY` for the buyer wallet.
