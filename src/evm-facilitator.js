@@ -51,6 +51,29 @@ function normalizeRpcUrls(config) {
   return rpcUrls;
 }
 
+function redactRpcUrl(value) {
+  try {
+    const url = new URL(value);
+    const redactedPath = url.pathname
+      .split("/")
+      .map((segment) =>
+        /^[A-Za-z0-9_-]{16,}$/.test(segment) || segment.toLowerCase().includes("key")
+          ? "redacted"
+          : segment
+      )
+      .join("/");
+
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    url.pathname = redactedPath;
+    return url.toString();
+  } catch {
+    return "<redacted-rpc-url>";
+  }
+}
+
 function parseChainId(networkId) {
   if (typeof networkId !== "string" || !networkId.startsWith("eip155:")) {
     throw new Error(`Unsupported EVM networkId: ${networkId ?? "unknown"}`);
@@ -1057,8 +1080,8 @@ export class SelfHostedEvmFacilitator {
       ok: true,
       networks: [...this.networks.values()].map((entry) => ({
         networkId: entry.networkId,
-        rpcUrl: entry.rpcUrl,
-        rpcUrls: entry.rpcUrls,
+        rpcUrl: redactRpcUrl(entry.rpcUrl),
+        rpcUrls: entry.rpcUrls.map(redactRpcUrl),
         relayer: entry.account.address
       }))
     };

@@ -51,6 +51,29 @@ function rpcHost(value) {
   }
 }
 
+function redactRpcUrl(value) {
+  try {
+    const url = new URL(value);
+    const redactedPath = url.pathname
+      .split("/")
+      .map((segment) =>
+        /^[A-Za-z0-9_-]{16,}$/.test(segment) || segment.toLowerCase().includes("key")
+          ? "redacted"
+          : segment
+      )
+      .join("/");
+
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    url.pathname = redactedPath;
+    return url.toString();
+  } catch {
+    return "<redacted-rpc-url>";
+  }
+}
+
 function isSharedPublicRpc(value) {
   return SHARED_PUBLIC_RPC_HOSTS.has(rpcHost(value));
 }
@@ -201,8 +224,8 @@ async function main() {
         baseUrl: `http://${host}:${port}`,
         networks: networks.map((network) => ({
           networkId: network.networkId,
-          rpcUrl: network.rpcUrl,
-          rpcUrls: network.rpcUrls ?? [network.rpcUrl],
+          rpcUrl: redactRpcUrl(network.rpcUrl),
+          rpcUrls: (network.rpcUrls ?? [network.rpcUrl]).map(redactRpcUrl),
           rpcPolicy: describeRpcPolicy(network)
         }))
       },

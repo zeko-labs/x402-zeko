@@ -387,14 +387,17 @@ test("self-hosted facilitator surfaces decoded escrow custom errors on settlemen
   assert.match(settlement.errorReason, /ReservationExpired/);
 });
 
-test("self-hosted facilitator reports configured RPC failover URLs", async () => {
+test("self-hosted facilitator reports configured RPC failover URLs without exposing API keys", async () => {
   const mock = createMockClients();
   const facilitator = new SelfHostedEvmFacilitator({
     networks: [
       {
         networkId: "eip155:8453",
-        rpcUrl: "https://base-primary.example",
-        rpcUrls: ["https://base-primary.example", "https://base-secondary.example"],
+        rpcUrl: "https://base-mainnet.g.alchemy.com/v2/privateApiKey123456789",
+        rpcUrls: [
+          "https://base-mainnet.g.alchemy.com/v2/privateApiKey123456789",
+          "https://mainnet.base.org"
+        ],
         relayerPrivateKey: RELAYER_PRIVATE_KEY,
         publicClient: mock.publicClient,
         walletClient: mock.walletClient
@@ -405,10 +408,10 @@ test("self-hosted facilitator reports configured RPC failover URLs", async () =>
   const supported = await facilitator.supported();
   assert.equal(supported.ok, true);
   assert.deepEqual(supported.networks[0].rpcUrls, [
-    "https://base-primary.example",
-    "https://base-secondary.example"
+    "https://base-mainnet.g.alchemy.com/v2/redacted",
+    "https://mainnet.base.org/"
   ]);
-  assert.equal(supported.networks[0].rpcUrl, "https://base-primary.example");
+  assert.equal(supported.networks[0].rpcUrl, "https://base-mainnet.g.alchemy.com/v2/redacted");
 });
 
 test("self-hosted facilitator HTTP server exposes supported, verify, and settle routes", async (t) => {
