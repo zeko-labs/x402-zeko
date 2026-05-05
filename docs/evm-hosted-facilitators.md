@@ -37,15 +37,7 @@ The package now includes a self-hosted EVM facilitator that verifies the signed 
 
 Self-hosted means the app owns verification and relaying. It still needs EVM RPC access because the relayer must read USDC balance/authorization state and submit the settlement transaction. For hosted production, configure a private or dedicated RPC as the first entry in `X402_BASE_RPC_URLS` or `X402_ETHEREUM_RPC_URLS`; keep public RPCs only as fallbacks. The facilitator refuses hosted startup when it only has one known shared public RPC unless `X402_EVM_ALLOW_SHARED_PUBLIC_RPC=true` is set for a local experiment.
 
-Read-only RPC calls and receipt polling retry transient failures such as `429`, rate limits, timeouts, and `502/503/504` responses. Writes are not blindly retried after broadcast because an ambiguous `eth_sendRawTransaction` response may already have submitted the transaction.
-
-Optional retry knobs:
-
-```bash
-X402_EVM_RPC_RETRY_COUNT=2
-X402_EVM_RPC_RETRY_DELAY_MS=250
-X402_EVM_RPC_TIMEOUT_MS=10000
-```
+Read-only RPC calls and receipt polling use conservative built-in retry/backoff for transient failures such as `429`, rate limits, timeouts, and `502/503/504` responses. Writes are not blindly retried after broadcast because an ambiguous `eth_sendRawTransaction` response may already have submitted the transaction.
 
 Ethereum example:
 
