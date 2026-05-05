@@ -355,6 +355,113 @@ test("reserve-release escrow v4 keeps the protocol fee on reserve and refunds on
   assert.equal(await releaseUsdc.balanceOf(await releaseEscrow.getAddress()), 0n);
 });
 
+test("reserve-release escrow v4 enforces the baked-in protocol fee cap", async () => {
+  const { provider, payer, payTo, protocolFeeRecipient, usdc, escrow } = await setupContracts(
+    "X402BaseUSDCReserveEscrowV4"
+  );
+  const grossAmount = 500_000n;
+  const requestIdHash = ethers.keccak256(ethers.toUtf8Bytes("req_demo_fee_cap"));
+  const paymentIdHash = ethers.keccak256(ethers.toUtf8Bytes("pay_demo_fee_cap"));
+  const resultCommitment = ethers.keccak256(ethers.toUtf8Bytes("proof_demo_fee_cap"));
+  const expiry = BigInt(Math.floor(Date.now() / 1000) + 3600);
+
+  assert.equal(await escrow.MAX_PROTOCOL_FEE_BPS(), 100n);
+  await (await usdc.mint(payer.address, grossAmount)).wait();
+
+  const signaturePayload = await signTransferWithAuthorization({
+    payer,
+    tokenAddress: await usdc.getAddress(),
+    chainId: (await provider.getNetwork()).chainId,
+    to: await escrow.getAddress(),
+    value: grossAmount,
+    validBefore: BigInt(Math.floor(Date.now() / 1000) + 3600),
+    nonce: ethers.keccak256(ethers.toUtf8Bytes("nonce_fee_cap"))
+  });
+
+  await assert.rejects(async () => {
+    await (
+      await escrow.reserveExactWithAuthorizationSplitImmediateFee(
+        requestIdHash,
+        paymentIdHash,
+        payer.address,
+        payTo.address,
+        protocolFeeRecipient.address,
+        await usdc.getAddress(),
+        grossAmount,
+        494_950n,
+        5_050n,
+        101,
+        signaturePayload.validAfter,
+        signaturePayload.validBefore,
+        signaturePayload.nonce,
+        resultCommitment,
+        expiry,
+        signaturePayload.signature.v,
+        signaturePayload.signature.r,
+        signaturePayload.signature.s
+      )
+    ).wait();
+  });
+
+  const reservation = await escrow.reservationOf(requestIdHash, paymentIdHash);
+  assert.equal(reservation.status, 0n);
+  assert.equal(await usdc.balanceOf(await escrow.getAddress()), 0n);
+  assert.equal(await usdc.balanceOf(protocolFeeRecipient.address), 0n);
+});
+
+test("reserve-release escrow v4 rejects protocol fee amounts that do not match fee bps", async () => {
+  const { provider, payer, payTo, protocolFeeRecipient, usdc, escrow } = await setupContracts(
+    "X402BaseUSDCReserveEscrowV4"
+  );
+  const grossAmount = 500_000n;
+  const requestIdHash = ethers.keccak256(ethers.toUtf8Bytes("req_demo_fee_mismatch"));
+  const paymentIdHash = ethers.keccak256(ethers.toUtf8Bytes("pay_demo_fee_mismatch"));
+  const resultCommitment = ethers.keccak256(ethers.toUtf8Bytes("proof_demo_fee_mismatch"));
+  const expiry = BigInt(Math.floor(Date.now() / 1000) + 3600);
+
+  await (await usdc.mint(payer.address, grossAmount)).wait();
+
+  const signaturePayload = await signTransferWithAuthorization({
+    payer,
+    tokenAddress: await usdc.getAddress(),
+    chainId: (await provider.getNetwork()).chainId,
+    to: await escrow.getAddress(),
+    value: grossAmount,
+    validBefore: BigInt(Math.floor(Date.now() / 1000) + 3600),
+    nonce: ethers.keccak256(ethers.toUtf8Bytes("nonce_fee_mismatch"))
+  });
+
+  await assert.rejects(async () => {
+    await (
+      await escrow.reserveExactWithAuthorizationSplitImmediateFee(
+        requestIdHash,
+        paymentIdHash,
+        payer.address,
+        payTo.address,
+        protocolFeeRecipient.address,
+        await usdc.getAddress(),
+        grossAmount,
+        494_000n,
+        6_000n,
+        100,
+        signaturePayload.validAfter,
+        signaturePayload.validBefore,
+        signaturePayload.nonce,
+        resultCommitment,
+        expiry,
+        signaturePayload.signature.v,
+        signaturePayload.signature.r,
+        signaturePayload.signature.s
+      )
+    ).wait();
+  });
+
+  const reservation = await escrow.reservationOf(requestIdHash, paymentIdHash);
+  assert.equal(reservation.status, 0n);
+  assert.equal(await usdc.balanceOf(await escrow.getAddress()), 0n);
+  assert.equal(await usdc.balanceOf(protocolFeeRecipient.address), 0n);
+});
+
 test("reserve-release escrow only allows the releaser role to create reservations", async () => {
   const { provider, payer, payTo, usdc, escrow } = await setupContracts();
   const amount = 77_000n;

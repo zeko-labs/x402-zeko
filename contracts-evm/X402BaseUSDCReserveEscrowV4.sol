@@ -5,11 +5,15 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {IERC3009Token} from "./interfaces/IERC3009Token.sol";
 
 contract X402BaseUSDCReserveEscrowV4 is AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC3009Token;
+
+    uint16 public constant MAX_PROTOCOL_FEE_BPS = 100;
+    uint16 private constant BPS_DENOMINATOR = 10_000;
 
     bytes32 public constant RELEASER_ROLE = keccak256("RELEASER_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
@@ -80,6 +84,8 @@ contract X402BaseUSDCReserveEscrowV4 is AccessControl, Pausable, ReentrancyGuard
     error ReservationNotRefundable(bytes32 reservationKey);
     error ReservationExpired(bytes32 reservationKey, uint256 expiry);
     error ResultCommitmentMismatch(bytes32 reservationKey);
+    error ProtocolFeeAboveCap(uint16 feeBps, uint16 maxFeeBps);
+    error ProtocolFeeAmountMismatch(uint256 protocolFeeAmount, uint256 expectedProtocolFeeAmount);
     error InvalidReservationData();
 
     constructor(address usdcAddress, address admin, address releaser) {
@@ -132,12 +138,19 @@ contract X402BaseUSDCReserveEscrowV4 is AccessControl, Pausable, ReentrancyGuard
             grossAmount == 0 ||
             sellerAmount == 0 ||
             grossAmount != sellerAmount + protocolFeeAmount ||
-            feeBps > 10_000 ||
             resultCommitment == bytes32(0) ||
             expiry <= block.timestamp ||
             (protocolFeeAmount > 0 && protocolFeePayTo == address(0))
         ) {
             revert InvalidReservationData();
+        }
+        if (feeBps > MAX_PROTOCOL_FEE_BPS) {
+            revert ProtocolFeeAboveCap(feeBps, MAX_PROTOCOL_FEE_BPS);
+        }
+
+        uint256 expectedProtocolFeeAmount = Math.mulDiv(grossAmount, feeBps, BPS_DENOMINATOR);
+        if (protocolFeeAmount != expectedProtocolFeeAmount) {
+            revert ProtocolFeeAmountMismatch(protocolFeeAmount, expectedProtocolFeeAmount);
         }
 
         bytes32 key = reservationKey(requestIdHash, paymentIdHash);

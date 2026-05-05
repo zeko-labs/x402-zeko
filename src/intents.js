@@ -6,6 +6,7 @@ import { toAtomicUnits } from "./ledger.js";
 import {
   BASE_MAINNET_USDC,
   ETHEREUM_MAINNET_USDC,
+  MAX_RESERVE_RELEASE_PROTOCOL_FEE_BPS,
   ZEKO_TESTNET_NETWORK
 } from "./targets.js";
 
@@ -318,8 +319,14 @@ function buildReserveReleaseIntent(target, input) {
           if (protocolFeePayTo === null) {
             throw new Error("protocolFeePayTo is required for reserve-release fee intents.");
           }
-          if (!Number.isInteger(input?.feeBps) || input.feeBps <= 0 || input.feeBps >= 10_000) {
-            throw new Error("feeBps must be an integer between 1 and 9999 for reserve-release fee intents.");
+          if (
+            !Number.isInteger(input?.feeBps) ||
+            input.feeBps <= 0 ||
+            input.feeBps > MAX_RESERVE_RELEASE_PROTOCOL_FEE_BPS
+          ) {
+            throw new Error(
+              `feeBps must be an integer between 1 and ${MAX_RESERVE_RELEASE_PROTOCOL_FEE_BPS} for reserve-release fee intents.`
+            );
           }
 
           return input.feeBps;

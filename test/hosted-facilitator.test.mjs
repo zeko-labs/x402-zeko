@@ -243,7 +243,7 @@ test("maps reserve-release Base fee-on-reserve payloads into hosted facilitator 
   );
 });
 
-test("fee-specific reserve-release builders reject non-positive fee bps", () => {
+test("fee-specific reserve-release builders reject fee bps outside the protocol cap", () => {
   assert.throws(
     () =>
       buildBaseMainnetUsdcReserveReleaseFeeRail({
@@ -253,7 +253,19 @@ test("fee-specific reserve-release builders reject non-positive fee bps", () => 
         amount: "0.50",
         escrowContract: "0x9999999999999999999999999999999999999999"
       }),
-    /feeBps must be an integer between 1 and 9999/
+    /feeBps must be an integer between 1 and 100/
+  );
+
+  assert.throws(
+    () =>
+      buildBaseMainnetUsdcReserveReleaseFeeRail({
+        payTo: "0x000000000000000000000000000000000000bEEF",
+        protocolFeePayTo: "0x000000000000000000000000000000000000FaCe",
+        feeBps: 101,
+        amount: "0.50",
+        escrowContract: "0x9999999999999999999999999999999999999999"
+      }),
+    /feeBps must be an integer between 1 and 100/
   );
 
   assert.throws(
@@ -269,7 +281,23 @@ test("fee-specific reserve-release builders reject non-positive fee bps", () => 
         amount: "0.50",
         resultDigest: "proof_result_digest_invalid_fee"
       }),
-    /feeBps must be an integer between 1 and 9999/
+    /feeBps must be an integer between 1 and 100/
+  );
+
+  assert.throws(
+    () =>
+      buildBaseUsdcReserveReleaseFeeIntent({
+        from: "0x1111111111111111111111111111111111111111",
+        payTo: "0x000000000000000000000000000000000000bEEF",
+        protocolFeePayTo: "0x000000000000000000000000000000000000FaCe",
+        feeBps: 101,
+        escrowContract: "0x9999999999999999999999999999999999999999",
+        requestId: "req_demo_fee_above_cap",
+        paymentId: "pay_demo_fee_above_cap",
+        amount: "0.50",
+        resultDigest: "proof_result_digest_above_cap_fee"
+      }),
+    /feeBps must be an integer between 1 and 100/
   );
 });
 
