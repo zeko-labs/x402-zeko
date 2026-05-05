@@ -14,13 +14,13 @@ services:
         value: 10000
       - key: X402_EVM_NETWORK
         value: base
-      - key: X402_BASE_RPC_URL
+      - key: X402_BASE_RPC_URLS
         sync: false
       - key: X402_BASE_RELAYER_PRIVATE_KEY
         sync: false
       - key: X402_BASE_PAY_TO
         sync: false
-      - key: X402_ETHEREUM_RPC_URL
+      - key: X402_ETHEREUM_RPC_URLS
         sync: false
       - key: X402_ETHEREUM_RELAYER_PRIVATE_KEY
         sync: false

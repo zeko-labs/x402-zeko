@@ -1,8 +1,25 @@
 import { createSelfHostedEvmFacilitatorHttpServer } from "../src/index.js";
 
+const SHARED_PUBLIC_RPC_HOSTS = new Set([
+  "mainnet.base.org",
+  "base-rpc.publicnode.com",
+  "ethereum.publicnode.com",
+  "rpc.ankr.com"
+]);
+
 function readOptionalEnv(name, fallback = "") {
   const value = process.env[name];
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
+}
+
+function envFlagEnabled(name) {
+  const value = readOptionalEnv(name).toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
+function envFlagDisabled(name) {
+  const value = readOptionalEnv(name).toLowerCase();
+  return value === "0" || value === "false" || value === "no";
 }
 
 function readOptionalEnvList(names) {
@@ -24,6 +41,70 @@ function readOptionalEnvList(names) {
   }
 
   return [];
+}
+
+function rpcHost(value) {
+  try {
+    return new URL(value).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function isSharedPublicRpc(value) {
+  return SHARED_PUBLIC_RPC_HOSTS.has(rpcHost(value));
+}
+
+function isHostedRuntime(host) {
+  if (envFlagEnabled("X402_EVM_FACILITATOR_REQUIRE_PRODUCTION_RPC")) {
+    return true;
+  }
+
+  if (envFlagDisabled("X402_EVM_FACILITATOR_REQUIRE_PRODUCTION_RPC")) {
+    return false;
+  }
+
+  return (
+    host === "0.0.0.0" ||
+    readOptionalEnv("NODE_ENV").toLowerCase() === "production" ||
+    envFlagEnabled("RENDER")
+  );
+}
+
+function describeRpcPolicy(network) {
+  const rpcUrls = Array.isArray(network.rpcUrls) ? network.rpcUrls : [network.rpcUrl].filter(Boolean);
+  const sharedPublicUrls = rpcUrls.filter(isSharedPublicRpc);
+  const hasPrivateOrDedicatedRpc = rpcUrls.some((url) => !isSharedPublicRpc(url));
+
+  return {
+    rpcCount: rpcUrls.length,
+    sharedPublicRpcCount: sharedPublicUrls.length,
+    hasPrivateOrDedicatedRpc,
+    productionReady: hasPrivateOrDedicatedRpc || rpcUrls.length > 1
+  };
+}
+
+function assertHostedRpcPolicy(networks, { host }) {
+  if (!isHostedRuntime(host) || envFlagEnabled("X402_EVM_ALLOW_SHARED_PUBLIC_RPC")) {
+    return;
+  }
+
+  const unsafe = networks
+    .map((network) => ({ network, policy: describeRpcPolicy(network) }))
+    .filter(({ policy }) => !policy.productionReady);
+
+  if (unsafe.length === 0) {
+    return;
+  }
+
+  const details = unsafe
+    .map(({ network }) => `${network.networkId}: ${(network.rpcUrls ?? [network.rpcUrl]).join(", ")}`)
+    .join("; ");
+  throw new Error(
+    `Hosted EVM facilitator needs a reliable RPC provider or fallback list; single shared public RPC is unsafe (${details}). ` +
+      "Set X402_BASE_RPC_URLS or X402_ETHEREUM_RPC_URLS to a private/dedicated RPC first, optionally followed by a public fallback. " +
+      "For local-only experiments, set X402_EVM_ALLOW_SHARED_PUBLIC_RPC=true."
+  );
 }
 
 function buildNetworkConfigs() {
@@ -103,6 +184,7 @@ async function main() {
   }
 
   const networks = buildNetworkConfigs();
+  assertHostedRpcPolicy(networks, { host });
   const server = createSelfHostedEvmFacilitatorHttpServer({ networks });
 
   await new Promise((resolve, reject) => {
@@ -120,7 +202,8 @@ async function main() {
         networks: networks.map((network) => ({
           networkId: network.networkId,
           rpcUrl: network.rpcUrl,
-          rpcUrls: network.rpcUrls ?? [network.rpcUrl]
+          rpcUrls: network.rpcUrls ?? [network.rpcUrl],
+          rpcPolicy: describeRpcPolicy(network)
         }))
       },
       null,

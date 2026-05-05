@@ -13,6 +13,12 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EMPTY_SETTLEMENT_ROOT = new MerkleMap().getRoot().toString();
+const SHARED_PUBLIC_RPC_HOSTS = new Set([
+  "mainnet.base.org",
+  "base-rpc.publicnode.com",
+  "ethereum.publicnode.com",
+  "rpc.ankr.com"
+]);
 
 function readOptionalEnv(name, fallback = "") {
   const value = process.env[name];
@@ -50,6 +56,18 @@ function readFirstEnv(names) {
   }
 
   return null;
+}
+
+function rpcHost(value) {
+  try {
+    return new URL(value).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function isSharedPublicRpc(value) {
+  return SHARED_PUBLIC_RPC_HOSTS.has(rpcHost(value));
 }
 
 function normalizeBaseUrl(value) {
@@ -184,6 +202,16 @@ function inspectEvm() {
 
   if (routingMode === "co-located") {
     warnings.push("payTo matches the relayer wallet; production routing should keep the receiving wallet separate.");
+  }
+
+  if (selfHosted.ready) {
+    const rpcUrls = Array.isArray(selfHosted.rpcUrls) ? selfHosted.rpcUrls : [];
+    const hasPrivateOrDedicatedRpc = rpcUrls.some((url) => !isSharedPublicRpc(url));
+    if (rpcUrls.length === 1 && !hasPrivateOrDedicatedRpc) {
+      warnings.push(
+        "self-hosted facilitator is using a single shared public RPC; hosted production should use X402_*_RPC_URLS with a private/dedicated primary RPC and optional fallback."
+      );
+    }
   }
 
   return {

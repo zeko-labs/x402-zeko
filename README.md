@@ -31,12 +31,14 @@ Enable one or both EVM rails:
 X402_EVM_RELAYER_PRIVATE_KEY=0x...
 X402_ETHEREUM_RPC_URL=https://ethereum.publicnode.com
 X402_ETHEREUM_PAY_TO=0x...
-X402_BASE_RPC_URL=https://mainnet.base.org
+X402_BASE_RPC_URLS=https://your-private-base-rpc,https://mainnet.base.org
 X402_BASE_PAY_TO=0x...
 pnpm evm:facilitator
 ```
 
 The facilitator listens on `127.0.0.1:7422` by default. Set `X402_EVM_FACILITATOR_HOST=0.0.0.0` for hosted deploys. A simple Render config is included in [`render.yaml`](/Users/evankereiakes/Documents/Codex/zeko-x402/render.yaml).
+
+Self-hosted means you run the verifier and relayer; it does not remove the need for an EVM RPC connection. The relayer still needs RPC access to read USDC balances/nonces and broadcast `transferWithAuthorization(...)`. Hosted production should use `X402_BASE_RPC_URLS` or `X402_ETHEREUM_RPC_URLS` with a private/dedicated primary RPC and optional public fallback.
 
 ### 2. Run smokes
 
