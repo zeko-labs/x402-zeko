@@ -218,10 +218,10 @@ function buildNetworkConfigs() {
 
 async function main() {
   const host = readOptionalEnv("X402_EVM_FACILITATOR_HOST", "127.0.0.1");
-  const port = Number(readOptionalEnv("X402_EVM_FACILITATOR_PORT", "7422"));
+  const port = Number(readOptionalEnv("X402_EVM_FACILITATOR_PORT", readOptionalEnv("PORT", "7422")));
 
   if (!Number.isInteger(port) || port <= 0) {
-    throw new Error("X402_EVM_FACILITATOR_PORT must be a positive integer.");
+    throw new Error("X402_EVM_FACILITATOR_PORT or PORT must be a positive integer.");
   }
 
   const networks = buildNetworkConfigs();

@@ -10,8 +10,6 @@ services:
     envVars:
       - key: X402_EVM_FACILITATOR_HOST
         value: 0.0.0.0
-      - key: X402_EVM_FACILITATOR_PORT
-        value: 10000
       - key: X402_EVM_NETWORK
         value: base
       - key: X402_BASE_RPC_URLS
