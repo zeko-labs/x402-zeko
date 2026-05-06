@@ -207,20 +207,22 @@ That is the whole design: OpenZeppelin handles the generic security/control piec
 
 `X402BaseUSDCReserveEscrowV4` adds the fee-on-reserve path used by SantaClawz-style marketplace fees.
 
-The V4 contract has a baked-in maximum:
+The V4 contract has a deployment-configured maximum:
 
-- `MAX_PROTOCOL_FEE_BPS = 100`
+- `maxProtocolFeeBps`
 
-That is a hard safety cap, not a runtime default. The caller still supplies `feeBps`, `sellerAmount`,
-and `protocolFeeAmount`, but the contract rejects any reservation where:
+That is a hard safety cap for a specific escrow deployment, not a generic x402 economic policy.
+The caller still supplies `feeBps`, `sellerAmount`, and `protocolFeeAmount`, but the contract
+rejects any reservation where:
 
-- `feeBps` is above `100`
+- `feeBps` is above the escrow deployment's `maxProtocolFeeBps`
 - `protocolFeeAmount` does not exactly match `grossAmount * feeBps / 10_000`
 - `grossAmount` does not equal `sellerAmount + protocolFeeAmount`
 
-This keeps the initial protocol fee ceiling at 1% even if an app server, facilitator, or deployer
-configuration is wrong. It also prevents misleading event metadata where the bps value says one thing
-and the actual fee amount does another.
+This keeps fee ceilings enforceable onchain without forcing every x402 integrator into the same
+business model. For example, SantaClawz can deploy an escrow with a `100` bps maximum while another
+application can choose its own cap. The x402 primitive only enforces the configured cap and fee math;
+the app decides the economic policy.
 
 ## Escrow topology
 

@@ -26,7 +26,7 @@ async function deployContract(factoryArtifact, signer, args = []) {
   return contract;
 }
 
-async function setupContracts(escrowContractName = "X402BaseUSDCReserveEscrow") {
+async function setupContracts(escrowContractName = "X402BaseUSDCReserveEscrow", options = {}) {
   const eip1193Provider = ganache.provider({
     logging: { quiet: true },
     wallet: {
@@ -49,11 +49,15 @@ async function setupContracts(escrowContractName = "X402BaseUSDCReserveEscrow") 
   const usdcArtifact = await loadCompiledArtifact("MockUSDC3009");
   const escrowArtifact = await loadCompiledArtifact(escrowContractName);
   const usdc = await deployContract(usdcArtifact, admin);
-  const escrow = await deployContract(escrowArtifact, releaser, [
+  const escrowArgs = [
     await usdc.getAddress(),
     admin.address,
     releaser.address
-  ]);
+  ];
+  if (escrowContractName === "X402BaseUSDCReserveEscrowV4") {
+    escrowArgs.push(options.maxProtocolFeeBps ?? 100);
+  }
+  const escrow = await deployContract(escrowArtifact, releaser, escrowArgs);
 
   return {
     eip1193Provider,
@@ -355,9 +359,10 @@ test("reserve-release escrow v4 keeps the protocol fee on reserve and refunds on
   assert.equal(await releaseUsdc.balanceOf(await releaseEscrow.getAddress()), 0n);
 });
 
-test("reserve-release escrow v4 enforces the baked-in protocol fee cap", async () => {
+test("reserve-release escrow v4 enforces the deployment-configured protocol fee cap", async () => {
   const { provider, payer, payTo, protocolFeeRecipient, usdc, escrow } = await setupContracts(
-    "X402BaseUSDCReserveEscrowV4"
+    "X402BaseUSDCReserveEscrowV4",
+    { maxProtocolFeeBps: 250 }
   );
   const grossAmount = 500_000n;
   const requestIdHash = ethers.keccak256(ethers.toUtf8Bytes("req_demo_fee_cap"));
@@ -365,7 +370,7 @@ test("reserve-release escrow v4 enforces the baked-in protocol fee cap", async (
   const resultCommitment = ethers.keccak256(ethers.toUtf8Bytes("proof_demo_fee_cap"));
   const expiry = BigInt(Math.floor(Date.now() / 1000) + 3600);
 
-  assert.equal(await escrow.MAX_PROTOCOL_FEE_BPS(), 100n);
+  assert.equal(await escrow.maxProtocolFeeBps(), 250n);
   await (await usdc.mint(payer.address, grossAmount)).wait();
 
   const signaturePayload = await signTransferWithAuthorization({
@@ -378,35 +383,74 @@ test("reserve-release escrow v4 enforces the baked-in protocol fee cap", async (
     nonce: ethers.keccak256(ethers.toUtf8Bytes("nonce_fee_cap"))
   });
 
+  await (
+    await escrow.reserveExactWithAuthorizationSplitImmediateFee(
+      requestIdHash,
+      paymentIdHash,
+      payer.address,
+      payTo.address,
+      protocolFeeRecipient.address,
+      await usdc.getAddress(),
+      grossAmount,
+      494_950n,
+      5_050n,
+      101,
+      signaturePayload.validAfter,
+      signaturePayload.validBefore,
+      signaturePayload.nonce,
+      resultCommitment,
+      expiry,
+      signaturePayload.signature.v,
+      signaturePayload.signature.r,
+      signaturePayload.signature.s
+    )
+  ).wait();
+
+  const reservation = await escrow.reservationOf(requestIdHash, paymentIdHash);
+  assert.equal(reservation.status, 1n);
+  assert.equal(reservation.protocolFeeAmount, 5_050n);
+  assert.equal(await usdc.balanceOf(protocolFeeRecipient.address), 5_050n);
+
+  const aboveCapRequestIdHash = ethers.keccak256(ethers.toUtf8Bytes("req_demo_fee_above_configured_cap"));
+  const aboveCapPaymentIdHash = ethers.keccak256(ethers.toUtf8Bytes("pay_demo_fee_above_configured_cap"));
+  const aboveCapSignaturePayload = await signTransferWithAuthorization({
+    payer,
+    tokenAddress: await usdc.getAddress(),
+    chainId: (await provider.getNetwork()).chainId,
+    to: await escrow.getAddress(),
+    value: grossAmount,
+    validBefore: BigInt(Math.floor(Date.now() / 1000) + 3600),
+    nonce: ethers.keccak256(ethers.toUtf8Bytes("nonce_fee_above_configured_cap"))
+  });
+
   await assert.rejects(async () => {
     await (
       await escrow.reserveExactWithAuthorizationSplitImmediateFee(
-        requestIdHash,
-        paymentIdHash,
+        aboveCapRequestIdHash,
+        aboveCapPaymentIdHash,
         payer.address,
         payTo.address,
         protocolFeeRecipient.address,
         await usdc.getAddress(),
         grossAmount,
-        494_950n,
-        5_050n,
-        101,
-        signaturePayload.validAfter,
-        signaturePayload.validBefore,
-        signaturePayload.nonce,
+        487_450n,
+        12_550n,
+        251,
+        aboveCapSignaturePayload.validAfter,
+        aboveCapSignaturePayload.validBefore,
+        aboveCapSignaturePayload.nonce,
         resultCommitment,
         expiry,
-        signaturePayload.signature.v,
-        signaturePayload.signature.r,
-        signaturePayload.signature.s
+        aboveCapSignaturePayload.signature.v,
+        aboveCapSignaturePayload.signature.r,
+        aboveCapSignaturePayload.signature.s
       )
     ).wait();
   });
 
-  const reservation = await escrow.reservationOf(requestIdHash, paymentIdHash);
-  assert.equal(reservation.status, 0n);
-  assert.equal(await usdc.balanceOf(await escrow.getAddress()), 0n);
-  assert.equal(await usdc.balanceOf(protocolFeeRecipient.address), 0n);
+  const aboveCapReservation = await escrow.reservationOf(aboveCapRequestIdHash, aboveCapPaymentIdHash);
+  assert.equal(aboveCapReservation.status, 0n);
+  assert.equal(await usdc.balanceOf(protocolFeeRecipient.address), 5_050n);
 });
 
 test("reserve-release escrow v4 rejects protocol fee amounts that do not match fee bps", async () => {

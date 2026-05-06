@@ -1,6 +1,6 @@
 import { buildEvmRail, buildZekoRail, defaultZekoAssetSymbol } from "./facilitator.js";
 
-export const MAX_RESERVE_RELEASE_PROTOCOL_FEE_BPS = 100;
+export const MAX_RESERVE_RELEASE_PROTOCOL_FEE_BPS = 9_999;
 
 export const ZEKO_TESTNET_NETWORK = Object.freeze({
   networkId: "zeko:testnet",

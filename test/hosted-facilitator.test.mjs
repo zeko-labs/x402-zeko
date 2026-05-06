@@ -243,7 +243,7 @@ test("maps reserve-release Base fee-on-reserve payloads into hosted facilitator 
   );
 });
 
-test("fee-specific reserve-release builders reject fee bps outside the protocol cap", () => {
+test("fee-specific reserve-release builders reject fee bps outside generic x402 bounds", () => {
   assert.throws(
     () =>
       buildBaseMainnetUsdcReserveReleaseFeeRail({
@@ -253,7 +253,7 @@ test("fee-specific reserve-release builders reject fee bps outside the protocol 
         amount: "0.50",
         escrowContract: "0x9999999999999999999999999999999999999999"
       }),
-    /feeBps must be an integer between 1 and 100/
+    /feeBps must be an integer between 1 and 9999/
   );
 
   assert.throws(
@@ -261,11 +261,11 @@ test("fee-specific reserve-release builders reject fee bps outside the protocol 
       buildBaseMainnetUsdcReserveReleaseFeeRail({
         payTo: "0x000000000000000000000000000000000000bEEF",
         protocolFeePayTo: "0x000000000000000000000000000000000000FaCe",
-        feeBps: 101,
+        feeBps: 10_000,
         amount: "0.50",
         escrowContract: "0x9999999999999999999999999999999999999999"
       }),
-    /feeBps must be an integer between 1 and 100/
+    /feeBps must be an integer between 1 and 9999/
   );
 
   assert.throws(
@@ -281,7 +281,7 @@ test("fee-specific reserve-release builders reject fee bps outside the protocol 
         amount: "0.50",
         resultDigest: "proof_result_digest_invalid_fee"
       }),
-    /feeBps must be an integer between 1 and 100/
+    /feeBps must be an integer between 1 and 9999/
   );
 
   assert.throws(
@@ -290,14 +290,14 @@ test("fee-specific reserve-release builders reject fee bps outside the protocol 
         from: "0x1111111111111111111111111111111111111111",
         payTo: "0x000000000000000000000000000000000000bEEF",
         protocolFeePayTo: "0x000000000000000000000000000000000000FaCe",
-        feeBps: 101,
+        feeBps: 10_000,
         escrowContract: "0x9999999999999999999999999999999999999999",
         requestId: "req_demo_fee_above_cap",
         paymentId: "pay_demo_fee_above_cap",
         amount: "0.50",
         resultDigest: "proof_result_digest_above_cap_fee"
       }),
-    /feeBps must be an integer between 1 and 100/
+    /feeBps must be an integer between 1 and 9999/
   );
 });
 
