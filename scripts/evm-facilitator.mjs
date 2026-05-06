@@ -6,6 +6,30 @@ const SHARED_PUBLIC_RPC_HOSTS = new Set([
   "ethereum.publicnode.com",
   "rpc.ankr.com"
 ]);
+const BASE_RPC_ENV_NAMES = [
+  "X402_BASE_RPC_URLS",
+  "X402_BASE_RPC_URL",
+  "BASE_RPC_URL",
+  "X402_BASE_MAINNET_RPC_URL",
+  "BASE_MAINNET_RPC_URL",
+  "BASE_RPC_HTTP_URL",
+  "QUICKNODE_BASE_RPC_URL",
+  "QUICKNODE_RPC_URL",
+  "ALCHEMY_BASE_RPC_URL",
+  "ALCHEMY_RPC_URL",
+  "RPC_URL"
+];
+const ETHEREUM_RPC_ENV_NAMES = [
+  "X402_ETHEREUM_RPC_URLS",
+  "X402_ETHEREUM_RPC_URL",
+  "ETHEREUM_RPC_URL",
+  "X402_ETHEREUM_MAINNET_RPC_URL",
+  "ETHEREUM_MAINNET_RPC_URL",
+  "ETHEREUM_RPC_HTTP_URL",
+  "QUICKNODE_ETHEREUM_RPC_URL",
+  "ALCHEMY_ETHEREUM_RPC_URL"
+];
+const GENERIC_EVM_RPC_ENV_NAMES = ["X402_EVM_RPC_URLS", "X402_EVM_RPC_URL"];
 
 function readOptionalEnv(name, fallback = "") {
   const value = process.env[name];
@@ -30,6 +54,10 @@ function readPositiveIntEnv(name, fallback) {
 function readNonNegativeIntEnv(name, fallback) {
   const parsed = Number(readOptionalEnv(name));
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function detectedEnvNames(names) {
+  return names.filter((name) => readOptionalEnv(name));
 }
 
 function readRpcEnvList(names) {
@@ -144,7 +172,11 @@ function assertHostedRpcPolicy(networks, { host }) {
   }
 
   const details = unsafe
-    .map(({ network }) => `${network.networkId}: ${(network.rpcUrls ?? [network.rpcUrl]).join(", ")}`)
+    .map(
+      ({ network }) =>
+        `${network.networkId}: ${(network.rpcUrls ?? [network.rpcUrl]).map(redactRpcUrl).join(", ")} ` +
+        `(detected envs: ${network.rpcEnvNames?.length ? network.rpcEnvNames.join(", ") : "none"})`
+    )
     .join("; ");
   throw new Error(
     `Hosted EVM facilitator needs a reliable RPC provider or fallback list; single shared public RPC is unsafe (${details}). ` +
@@ -155,7 +187,8 @@ function assertHostedRpcPolicy(networks, { host }) {
 
 function buildNetworkConfigs() {
   const requested = readOptionalEnv("X402_EVM_NETWORK", "base").toLowerCase();
-  const genericRpcUrls = readRpcEnvList(["X402_EVM_RPC_URLS", "X402_EVM_RPC_URL"]);
+  const genericRpcUrls = readRpcEnvList(GENERIC_EVM_RPC_ENV_NAMES);
+  const genericRpcEnvNames = detectedEnvNames(GENERIC_EVM_RPC_ENV_NAMES);
   const genericRelayerPrivateKey = readOptionalEnv(
     "X402_EVM_RELAYER_PRIVATE_KEY",
     readOptionalEnv("EVM_RELAYER_PRIVATE_KEY")
@@ -167,7 +200,8 @@ function buildNetworkConfigs() {
   };
   const configs = [];
 
-  const baseRpcUrls = readRpcEnvList(["X402_BASE_RPC_URLS", "X402_BASE_RPC_URL", "BASE_RPC_URL"]);
+  const baseRpcEnvNames = [...BASE_RPC_ENV_NAMES, ...GENERIC_EVM_RPC_ENV_NAMES];
+  const baseRpcUrls = readRpcEnvList(baseRpcEnvNames);
   const baseRelayerPrivateKey = readOptionalEnv(
     "X402_BASE_RELAYER_PRIVATE_KEY",
     genericRelayerPrivateKey
@@ -178,16 +212,14 @@ function buildNetworkConfigs() {
       networkId: "eip155:8453",
       rpcUrl: baseRpcUrls[0],
       rpcUrls: baseRpcUrls,
+      rpcEnvNames: detectedEnvNames(baseRpcEnvNames),
       relayerPrivateKey: baseRelayerPrivateKey,
       ...rpcRuntimeConfig
     });
   }
 
-  const ethereumRpcUrls = readRpcEnvList([
-    "X402_ETHEREUM_RPC_URLS",
-    "X402_ETHEREUM_RPC_URL",
-    "ETHEREUM_RPC_URL"
-  ]);
+  const ethereumRpcEnvNames = [...ETHEREUM_RPC_ENV_NAMES, ...GENERIC_EVM_RPC_ENV_NAMES];
+  const ethereumRpcUrls = readRpcEnvList(ethereumRpcEnvNames);
   const ethereumRelayerPrivateKey = readOptionalEnv(
     "X402_ETHEREUM_RELAYER_PRIVATE_KEY",
     genericRelayerPrivateKey
@@ -198,6 +230,7 @@ function buildNetworkConfigs() {
       networkId: "eip155:1",
       rpcUrl: ethereumRpcUrls[0],
       rpcUrls: ethereumRpcUrls,
+      rpcEnvNames: detectedEnvNames(ethereumRpcEnvNames),
       relayerPrivateKey: ethereumRelayerPrivateKey,
       ...rpcRuntimeConfig
     });
@@ -223,6 +256,7 @@ function buildNetworkConfigs() {
       networkId: selectedNetworkId,
       rpcUrl: genericRpcUrls[0],
       rpcUrls: genericRpcUrls,
+      rpcEnvNames: genericRpcEnvNames,
       relayerPrivateKey: genericRelayerPrivateKey,
       ...rpcRuntimeConfig
     }
@@ -255,6 +289,7 @@ async function main() {
         baseUrl: `http://${host}:${port}`,
         networks: networks.map((network) => ({
           networkId: network.networkId,
+          rpcEnvNames: network.rpcEnvNames ?? [],
           rpcUrl: redactRpcUrl(network.rpcUrl),
           rpcUrls: (network.rpcUrls ?? [network.rpcUrl]).map(redactRpcUrl),
           rpcPolicy: describeRpcPolicy(network),
