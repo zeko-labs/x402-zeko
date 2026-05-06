@@ -32,7 +32,9 @@ function readNonNegativeIntEnv(name, fallback) {
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
-function readOptionalEnvList(names) {
+function readRpcEnvList(names) {
+  const values = [];
+
   for (const name of names) {
     const value = readOptionalEnv(name);
 
@@ -40,17 +42,28 @@ function readOptionalEnvList(names) {
       continue;
     }
 
-    const items = value
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter(Boolean);
-
-    if (items.length > 0) {
-      return items;
-    }
+    values.push(
+      ...value
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+    );
   }
 
-  return [];
+  const seen = new Set();
+  const unique = values.filter((value) => {
+    if (seen.has(value)) {
+      return false;
+    }
+
+    seen.add(value);
+    return true;
+  });
+
+  return [
+    ...unique.filter((value) => !isSharedPublicRpc(value)),
+    ...unique.filter((value) => isSharedPublicRpc(value))
+  ];
 }
 
 function rpcHost(value) {
@@ -142,7 +155,7 @@ function assertHostedRpcPolicy(networks, { host }) {
 
 function buildNetworkConfigs() {
   const requested = readOptionalEnv("X402_EVM_NETWORK", "base").toLowerCase();
-  const genericRpcUrls = readOptionalEnvList(["X402_EVM_RPC_URLS", "X402_EVM_RPC_URL"]);
+  const genericRpcUrls = readRpcEnvList(["X402_EVM_RPC_URLS", "X402_EVM_RPC_URL"]);
   const genericRelayerPrivateKey = readOptionalEnv(
     "X402_EVM_RELAYER_PRIVATE_KEY",
     readOptionalEnv("EVM_RELAYER_PRIVATE_KEY")
@@ -154,7 +167,7 @@ function buildNetworkConfigs() {
   };
   const configs = [];
 
-  const baseRpcUrls = readOptionalEnvList(["X402_BASE_RPC_URLS", "X402_BASE_RPC_URL", "BASE_RPC_URL"]);
+  const baseRpcUrls = readRpcEnvList(["X402_BASE_RPC_URLS", "X402_BASE_RPC_URL", "BASE_RPC_URL"]);
   const baseRelayerPrivateKey = readOptionalEnv(
     "X402_BASE_RELAYER_PRIVATE_KEY",
     genericRelayerPrivateKey
@@ -170,7 +183,7 @@ function buildNetworkConfigs() {
     });
   }
 
-  const ethereumRpcUrls = readOptionalEnvList([
+  const ethereumRpcUrls = readRpcEnvList([
     "X402_ETHEREUM_RPC_URLS",
     "X402_ETHEREUM_RPC_URL",
     "ETHEREUM_RPC_URL"
