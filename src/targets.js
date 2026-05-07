@@ -1,5 +1,7 @@
 import { buildEvmRail, buildZekoRail, defaultZekoAssetSymbol } from "./facilitator.js";
 
+export const MAX_RESERVE_RELEASE_PROTOCOL_FEE_BPS = 9_999;
+
 export const ZEKO_TESTNET_NETWORK = Object.freeze({
   networkId: "zeko:testnet",
   o1jsNetworkId: "zeko",
@@ -86,8 +88,14 @@ function buildReserveReleaseRail(target, input) {
   const feeBps =
     hasProtocolFeePayTo
       ? (() => {
-          if (!Number.isInteger(input?.feeBps) || input.feeBps <= 0 || input.feeBps >= 10_000) {
-            throw new Error("feeBps must be an integer between 1 and 9999 for reserve-release fee rails.");
+          if (
+            !Number.isInteger(input?.feeBps) ||
+            input.feeBps <= 0 ||
+            input.feeBps > MAX_RESERVE_RELEASE_PROTOCOL_FEE_BPS
+          ) {
+            throw new Error(
+              `feeBps must be an integer between 1 and ${MAX_RESERVE_RELEASE_PROTOCOL_FEE_BPS} for reserve-release fee rails.`
+            );
           }
 
           return input.feeBps;

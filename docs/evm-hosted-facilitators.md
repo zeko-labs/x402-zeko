@@ -35,10 +35,26 @@ The package now includes a self-hosted EVM facilitator that verifies the signed 
 - HTTP mode: set `X402_EVM_FACILITATOR_URL=http://127.0.0.1:7422`
 - Dedicated Ethereum smoke: `pnpm smoke:ethereum-flow`
 
+Self-hosted means the app owns verification and relaying. It still needs EVM RPC access because the relayer must read USDC balance/authorization state and submit the settlement transaction. For hosted production, configure a private or dedicated HTTPS RPC as the first entry in `X402_BASE_RPC_URLS` or `X402_ETHEREUM_RPC_URLS`; keep public RPCs only as fallbacks. The facilitator refuses hosted startup when it only has one known shared public RPC unless `X402_EVM_ALLOW_SHARED_PUBLIC_RPC=true` is set for a local experiment.
+
+On Render, set `X402_EVM_FACILITATOR_HOST=0.0.0.0` and leave `X402_EVM_FACILITATOR_PORT` unset unless you also set Render's `PORT`. The server will use Render's injected `PORT` automatically. For Base mainnet, the minimum production RPC shape is:
+
+```bash
+X402_BASE_RPC_URLS=https://your-private-base-rpc
+```
+
+An optional public fallback is fine after the private URL:
+
+```bash
+X402_BASE_RPC_URLS=https://your-private-base-rpc,https://mainnet.base.org
+```
+
+Read-only RPC calls and receipt polling use conservative built-in retry/backoff for transient failures such as `429`, rate limits, timeouts, and `502/503/504` responses. Writes are not blindly retried after broadcast because an ambiguous `eth_sendRawTransaction` response may already have submitted the transaction.
+
 Ethereum example:
 
 ```bash
-X402_ETHEREUM_RPC_URL=https://... \
+X402_ETHEREUM_RPC_URLS=https://your-private-ethereum-rpc,https://ethereum.publicnode.com \
 X402_ETHEREUM_PAY_TO=0x1111111111111111111111111111111111111111 \
 pnpm smoke:ethereum-flow
 ```
@@ -46,7 +62,7 @@ pnpm smoke:ethereum-flow
 Base example:
 
 ```bash
-X402_BASE_RPC_URL=https://... \
+X402_BASE_RPC_URLS=https://your-private-base-rpc,https://mainnet.base.org \
 X402_EVM_RELAYER_PRIVATE_KEY=0x... \
 pnpm evm:facilitator
 ```

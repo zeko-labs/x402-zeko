@@ -203,6 +203,27 @@ The custom x402-specific logic is intentionally narrow:
 
 That is the whole design: OpenZeppelin handles the generic security/control pieces, and the contract adds only the x402 reserve-release semantics.
 
+### V4 fee-on-reserve cap
+
+`X402BaseUSDCReserveEscrowV4` adds the fee-on-reserve path used by SantaClawz-style marketplace fees.
+
+The V4 contract has a deployment-configured maximum:
+
+- `maxProtocolFeeBps`
+
+That is a hard safety cap for a specific escrow deployment, not a generic x402 economic policy.
+The caller still supplies `feeBps`, `sellerAmount`, and `protocolFeeAmount`, but the contract
+rejects any reservation where:
+
+- `feeBps` is above the escrow deployment's `maxProtocolFeeBps`
+- `protocolFeeAmount` does not exactly match `grossAmount * feeBps / 10_000`
+- `grossAmount` does not equal `sellerAmount + protocolFeeAmount`
+
+This keeps fee ceilings enforceable onchain without forcing every x402 integrator into the same
+business model. For example, SantaClawz can deploy an escrow with a `100` bps maximum while another
+application can choose its own cap. The x402 primitive only enforces the configured cap and fee math;
+the app decides the economic policy.
+
 ## Escrow topology
 
 The currently deployed hardened Base Sepolia escrow is:
