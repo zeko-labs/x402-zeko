@@ -51,6 +51,16 @@ async function buildSignedPayment(input) {
     message: input.intent.typedData.message
   });
   const authorization = buildSignedEvmAuthorization(input.intent, { signature });
+  const feeAuthorization = input.feeIntent
+    ? buildSignedEvmAuthorization(input.feeIntent, {
+        signature: await buyer.signTypedData({
+          domain: input.feeIntent.typedData.domain,
+          types: input.feeIntent.typedData.types,
+          primaryType: input.feeIntent.typedData.primaryType,
+          message: input.feeIntent.typedData.message
+        })
+      })
+    : undefined;
   const payload = buildPaymentPayload({
     requestId: requirements.requestId,
     paymentId: input.paymentId ?? "pay_self_hosted_demo",
@@ -60,7 +70,8 @@ async function buildSignedPayment(input) {
     turnId: "turn_self_hosted",
     issuedAtIso: "2026-04-24T12:00:00.000Z",
     expiresAtIso: "2099-01-01T00:00:00.000Z",
-    authorization
+    authorization,
+    ...(feeAuthorization ? { feeAuthorization } : {})
   });
 
   return {
@@ -146,6 +157,65 @@ test("self-hosted facilitator verifies and settles Base x402 payments", async ()
   assert.equal(settlement.success, true);
   assert.equal(settlement.transactionHash, "0xtxhashdemo");
   assert.equal(mock.calls.some((entry) => entry[0] === "writeContract"), true);
+});
+
+test("self-hosted facilitator enforces and settles exact Base protocol-fee split", async () => {
+  const mock = createMockClients();
+  const buyerAddress = privateKeyToAccount(BUYER_PRIVATE_KEY).address;
+  const rail = buildBaseMainnetUsdcRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    protocolFeePayTo: "0x000000000000000000000000000000000000face",
+    feeBps: 100,
+    amount: "0.50"
+  });
+  const intent = buildBaseUsdcExactEip3009Intent({
+    from: buyerAddress,
+    to: rail.payTo,
+    amount: "0.495",
+    nonce: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  });
+  const feeIntent = buildBaseUsdcExactEip3009Intent({
+    from: buyerAddress,
+    to: "0x000000000000000000000000000000000000face",
+    amount: "0.005",
+    nonce: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  });
+  const { requirements, payload } = await buildSignedPayment({ rail, intent, feeIntent });
+  const facilitator = new SelfHostedEvmFacilitator({
+    networks: [
+      {
+        networkId: "eip155:8453",
+        rpcUrl: "https://base.example",
+        relayerPrivateKey: RELAYER_PRIVATE_KEY,
+        publicClient: mock.publicClient,
+        walletClient: mock.walletClient
+      }
+    ]
+  });
+
+  const verification = await facilitator.verify({
+    paymentPayload: payload,
+    paymentRequirements: requirements
+  });
+  const settlement = await facilitator.settle({
+    paymentPayload: payload,
+    paymentRequirements: requirements
+  });
+
+  const transferCalls = mock.calls.filter(
+    (entry) => entry[0] === "writeContract" && entry[1] === "transferWithAuthorization"
+  );
+
+  assert.equal(verification.isValid, true);
+  assert.equal(verification.feeSplit.protocolFeeAmount, "5000");
+  assert.equal(settlement.success, true);
+  assert.equal(settlement.feeSplit.sellerAmount, "495000");
+  assert.equal(settlement.feeSplit.protocolFeeAmount, "5000");
+  assert.equal(transferCalls.length, 2);
+  assert.equal(transferCalls[0][3], "0x000000000000000000000000000000000000face");
+  assert.equal(transferCalls[0][4], "5000");
+  assert.equal(transferCalls[1][3], "0x000000000000000000000000000000000000bEEF");
+  assert.equal(transferCalls[1][4], "495000");
 });
 
 test("self-hosted facilitator supports Ethereum mainnet with the same EIP-3009 flow", async () => {

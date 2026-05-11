@@ -170,6 +170,7 @@ export function assertPaymentPayload(value) {
   }
 
   const authorization = assertAuthorization(value.authorization, settlementRail);
+  const feeAuthorization = assertAuthorization(value.feeAuthorization, settlementRail);
 
   return {
     protocol: value.protocol === "x402" ? "x402" : (() => {
@@ -233,6 +234,7 @@ export function assertPaymentPayload(value) {
       ? { paymentContextDigest: value.paymentContextDigest }
       : {}),
     ...(authorization ? { authorization } : {}),
+    ...(feeAuthorization ? { feeAuthorization } : {}),
     authorizationDigest: typeof value.authorizationDigest === "string" && value.authorizationDigest.length > 0
       ? value.authorizationDigest
       : (() => {
@@ -252,6 +254,7 @@ export function buildPaymentPayload(input) {
     option?.settlementRail ??
     inferSettlementRail(input.networkId ?? option?.network);
   const authorization = assertAuthorization(input.authorization, settlementRail);
+  const feeAuthorization = assertAuthorization(input.feeAuthorization, settlementRail);
   const payloadWithoutDigest = {
     protocol: "x402",
     version: "2",
@@ -285,7 +288,8 @@ export function buildPaymentPayload(input) {
         issuedAtIso,
         expiresAtIso
       }),
-    ...(authorization ? { authorization } : {})
+    ...(authorization ? { authorization } : {}),
+    ...(feeAuthorization ? { feeAuthorization } : {})
   };
 
   return assertPaymentPayload({

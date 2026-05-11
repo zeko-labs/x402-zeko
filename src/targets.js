@@ -39,6 +39,16 @@ export const ETHEREUM_MAINNET_USDC = Object.freeze({
 });
 
 function buildExactEip3009Rail(target, input) {
+  const hasFeeSplit =
+    typeof input?.protocolFeePayTo === "string" ||
+    typeof input?.protocolFeeAmount === "string" ||
+    typeof input?.sellerAmount === "string" ||
+    input?.feeBps !== undefined;
+
+  if (hasFeeSplit && !(typeof input?.protocolFeePayTo === "string" && input.protocolFeePayTo.length > 0)) {
+    throw new Error("protocolFeePayTo is required when configuring an exact EVM fee split.");
+  }
+
   return buildEvmRail({
     networkId: target.networkId,
     amount: input.amount,
@@ -48,7 +58,8 @@ function buildExactEip3009Rail(target, input) {
     tokenAddress: target.asset.address,
     payTo: input.payTo,
     transferMethod: "eip3009",
-    settlementModel: input.settlementModel ?? "x402-exact-evm-v1",
+    settlementModel:
+      input.settlementModel ?? (hasFeeSplit ? "x402-exact-evm-fee-split-v1" : "x402-exact-evm-v1"),
     description: input.description,
     facilitatorMode: input.facilitatorMode ?? "x402-http",
     extensions: {
@@ -59,6 +70,29 @@ function buildExactEip3009Rail(target, input) {
         assetVersion: input.assetVersion ?? "2",
         transferMethod: target.transferMethod,
         facilitatorUrl: input.facilitatorUrl ?? null,
+        ...(hasFeeSplit
+          ? {
+              feeSplit: {
+                version: "protocol-owner-fee-v1",
+                sellerPayTo: input.sellerPayTo ?? input.payTo,
+                protocolFeePayTo: input.protocolFeePayTo,
+                feeSettlementMode: input.feeSettlementMode ?? "exact-eip3009-split-v1",
+                ...(Number.isInteger(input.feeBps) ? { feeBps: input.feeBps } : {}),
+                ...(typeof input.grossAmount === "string" && input.grossAmount.length > 0
+                  ? { grossAmount: input.grossAmount }
+                  : {}),
+                ...(typeof input.sellerAmount === "string" && input.sellerAmount.length > 0
+                  ? { sellerAmount: input.sellerAmount }
+                  : {}),
+                ...(typeof input.protocolFeeAmount === "string" && input.protocolFeeAmount.length > 0
+                  ? { protocolFeeAmount: input.protocolFeeAmount }
+                  : {}),
+                ...(typeof input.feePolicyDigest === "string" && input.feePolicyDigest.length > 0
+                  ? { feePolicyDigest: input.feePolicyDigest }
+                  : {})
+              }
+            }
+          : {}),
         ...(typeof input.maxTimeoutSeconds === "number" ? { maxTimeoutSeconds: input.maxTimeoutSeconds } : {}),
         ...(typeof input.defaultFacilitator === "string" && input.defaultFacilitator.length > 0
           ? { defaultFacilitator: input.defaultFacilitator }

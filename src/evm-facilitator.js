@@ -543,6 +543,28 @@ function assertOptionalBigIntMatch(label, provided, expected) {
   return expected;
 }
 
+function parseHostedAuthorizationLeg(label, authorization, signature) {
+  if (!isRecord(authorization)) {
+    throw new Error(`${label}.authorization is required.`);
+  }
+
+  if (typeof signature !== "string" || signature.length === 0) {
+    throw new Error(`${label}.signature is required.`);
+  }
+
+  return {
+    signature,
+    authorization: {
+      from: assertNonEmptyString(`${label}.authorization.from`, authorization.from),
+      to: assertNonEmptyString(`${label}.authorization.to`, authorization.to),
+      value: BigInt(assertNonEmptyString(`${label}.authorization.value`, authorization.value)),
+      validAfter: BigInt(assertNonEmptyString(`${label}.authorization.validAfter`, authorization.validAfter)),
+      validBefore: BigInt(assertNonEmptyString(`${label}.authorization.validBefore`, authorization.validBefore)),
+      nonce: assertNonEmptyString(`${label}.authorization.nonce`, authorization.nonce)
+    }
+  };
+}
+
 function normalizeHostedRequest(input) {
   if (
     isRecord(input?.paymentPayload) &&
@@ -566,8 +588,11 @@ function normalizeHostedExactPayment(input) {
   const hostedPaymentPayload = request.paymentPayload;
   const accepted = hostedPaymentPayload.accepted;
   const payload = hostedPaymentPayload.payload;
-  const authorization = payload.authorization;
-  const signature = payload.signature;
+  const primaryLeg = parseHostedAuthorizationLeg(
+    "paymentPayload.payload",
+    payload.authorization,
+    payload.signature
+  );
   const networkId = assertNonEmptyString("paymentPayload.accepted.network", accepted?.network);
   const chainId = parseChainId(networkId);
   const tokenAddress = assertNonEmptyString("paymentPayload.accepted.asset", accepted?.asset);
@@ -578,20 +603,12 @@ function normalizeHostedExactPayment(input) {
   );
   const domainVersion = accepted?.extra?.version ?? "2";
 
-  if (!isRecord(authorization)) {
-    throw new Error("paymentPayload.payload.authorization is required.");
-  }
-
-  if (typeof signature !== "string" || signature.length === 0) {
-    throw new Error("paymentPayload.payload.signature is required.");
-  }
-
-  const from = assertNonEmptyString("authorization.from", authorization.from);
-  const to = assertNonEmptyString("authorization.to", authorization.to);
-  const value = BigInt(assertNonEmptyString("authorization.value", authorization.value));
-  const validAfter = BigInt(assertNonEmptyString("authorization.validAfter", authorization.validAfter));
-  const validBefore = BigInt(assertNonEmptyString("authorization.validBefore", authorization.validBefore));
-  const nonce = assertNonEmptyString("authorization.nonce", authorization.nonce);
+  const from = primaryLeg.authorization.from;
+  const to = primaryLeg.authorization.to;
+  const value = primaryLeg.authorization.value;
+  const validAfter = primaryLeg.authorization.validAfter;
+  const validBefore = primaryLeg.authorization.validBefore;
+  const nonce = primaryLeg.authorization.nonce;
   const acceptedAmount = BigInt(assertNonEmptyString("paymentPayload.accepted.amount", accepted.amount));
   const settlementModel =
     typeof accepted?.extra?.settlementModel === "string" ? accepted.extra.settlementModel : null;
@@ -758,25 +775,115 @@ function normalizeHostedExactPayment(input) {
             : {})
         }
       : null;
-  const authorizationTarget = reserveRelease?.contractAddress ?? payTo;
+  const exactFeeSplit =
+    !reserveRelease && feeSplitConfig
+      ? (() => {
+          const feeBps = Number.isInteger(feeSplitConfig.feeBps)
+            ? Number(feeSplitConfig.feeBps)
+            : 0;
+          const grossAmount = BigInt(feeSplitConfig.grossAmount ?? acceptedAmount.toString());
+          const sellerAmount = BigInt(assertNonEmptyString(
+            "paymentPayload.accepted.extra.feeSplit.sellerAmount",
+            feeSplitConfig.sellerAmount
+          ));
+          const protocolFeeAmount = BigInt(assertNonEmptyString(
+            "paymentPayload.accepted.extra.feeSplit.protocolFeeAmount",
+            feeSplitConfig.protocolFeeAmount
+          ));
+          const sellerPayTo = assertNonEmptyString(
+            "paymentPayload.accepted.extra.feeSplit.sellerPayTo",
+            feeSplitConfig.sellerPayTo ?? payTo
+          );
+          const protocolFeePayTo = assertNonEmptyString(
+            "paymentPayload.accepted.extra.feeSplit.protocolFeePayTo",
+            feeSplitConfig.protocolFeePayTo
+          );
+
+          if (grossAmount !== acceptedAmount) {
+            throw new Error("paymentPayload.accepted.extra.feeSplit.grossAmount must match paymentPayload.accepted.amount.");
+          }
+
+          if (sellerAmount <= 0n || protocolFeeAmount <= 0n) {
+            throw new Error("Hosted exact fee split requires positive seller and protocol fee amounts.");
+          }
+
+          if (sellerAmount + protocolFeeAmount !== grossAmount) {
+            throw new Error("Hosted exact fee split amounts must sum to paymentPayload.accepted.amount.");
+          }
+
+          if (sellerPayTo.toLowerCase() !== payTo.toLowerCase()) {
+            throw new Error("paymentPayload.accepted.extra.feeSplit.sellerPayTo must match paymentPayload.accepted.payTo.");
+          }
+
+          return {
+            feeBps,
+            grossAmount,
+            sellerAmount,
+            protocolFeeAmount,
+            sellerPayTo,
+            protocolFeePayTo,
+            feeSettlementMode: feeSplitConfig.feeSettlementMode ?? "exact-eip3009-split-v1",
+            ...(typeof feeSplitConfig.feePolicyDigest === "string" && feeSplitConfig.feePolicyDigest.length > 0
+              ? { feePolicyDigest: feeSplitConfig.feePolicyDigest }
+              : {})
+          };
+        })()
+      : null;
+  const authorizationTarget = reserveRelease?.contractAddress ?? exactFeeSplit?.sellerPayTo ?? payTo;
+  const authorizationValue = exactFeeSplit?.sellerAmount ?? acceptedAmount;
 
   if (to.toLowerCase() !== authorizationTarget.toLowerCase()) {
     throw new Error(
       reserveRelease
         ? "Hosted reserve-release authorization.to must match the configured escrow contract."
+        : exactFeeSplit
+          ? "Hosted exact fee-split seller authorization.to must match paymentPayload.accepted.payTo."
         : "Hosted payment authorization.to must match paymentPayload.accepted.payTo."
     );
   }
 
-  if (value !== acceptedAmount) {
-    throw new Error("Hosted payment authorization.value must match paymentPayload.accepted.amount.");
+  if (value !== authorizationValue) {
+    throw new Error(
+      exactFeeSplit
+        ? "Hosted exact fee-split seller authorization.value must match the advertised seller amount."
+        : "Hosted payment authorization.value must match paymentPayload.accepted.amount."
+    );
+  }
+
+  const hostedFeeLeg = isRecord(payload?.feeAuthorization) ? payload.feeAuthorization : null;
+  const feeLeg =
+    exactFeeSplit
+      ? parseHostedAuthorizationLeg(
+          "paymentPayload.payload.feeAuthorization",
+          hostedFeeLeg?.authorization,
+          hostedFeeLeg?.signature
+        )
+      : null;
+
+  if (exactFeeSplit && feeLeg) {
+    if (feeLeg.authorization.from.toLowerCase() !== from.toLowerCase()) {
+      throw new Error("Hosted exact fee-split feeAuthorization.from must match the seller authorization payer.");
+    }
+
+    if (feeLeg.authorization.to.toLowerCase() !== exactFeeSplit.protocolFeePayTo.toLowerCase()) {
+      throw new Error("Hosted exact fee-split feeAuthorization.to must match protocolFeePayTo.");
+    }
+
+    if (feeLeg.authorization.value !== exactFeeSplit.protocolFeeAmount) {
+      throw new Error("Hosted exact fee-split feeAuthorization.value must match the advertised protocol fee amount.");
+    }
+
+    if (feeLeg.authorization.nonce.toLowerCase() === nonce.toLowerCase()) {
+      throw new Error("Hosted exact fee-split seller and protocol fee authorizations must use different nonces.");
+    }
   }
 
   return {
     request,
     hostedPaymentPayload,
     accepted,
-    signature,
+    signature: primaryLeg.signature,
+    ...(feeLeg ? { feeSignature: feeLeg.signature } : {}),
     networkId,
     chainId,
     tokenAddress,
@@ -808,8 +915,32 @@ function normalizeHostedExactPayment(input) {
         nonce
       }
     },
+    ...(feeLeg
+      ? {
+          feeAuthorization: feeLeg.authorization,
+          feeTypedData: {
+            domain: {
+              name: domainName,
+              version: domainVersion,
+              chainId,
+              verifyingContract: tokenAddress
+            },
+            primaryType: "TransferWithAuthorization",
+            types: transferWithAuthorizationTypes(),
+            message: {
+              from: feeLeg.authorization.from,
+              to: feeLeg.authorization.to,
+              value: feeLeg.authorization.value.toString(),
+              validAfter: feeLeg.authorization.validAfter.toString(),
+              validBefore: feeLeg.authorization.validBefore.toString(),
+              nonce: feeLeg.authorization.nonce
+            }
+          }
+        }
+      : {}),
     settlementModel,
-    reserveRelease
+    reserveRelease,
+    exactFeeSplit
   };
 }
 
@@ -871,13 +1002,13 @@ function makeClients(config) {
   };
 }
 
-async function readAuthorizationState(clients, payment) {
+async function readAuthorizationState(clients, payment, authorization = payment.authorization) {
   return await retryTransientRpc(clients, "authorizationState", async () => {
     return await clients.publicClient.readContract({
       address: payment.tokenAddress,
       abi: USDC_EIP3009_ABI,
       functionName: "authorizationState",
-      args: [payment.authorization.from, payment.authorization.nonce]
+      args: [authorization.from, authorization.nonce]
     });
   });
 }
@@ -905,15 +1036,15 @@ function verificationSummary(payment, clients, input) {
     relayer: clients.account.address,
     authorizationUsed: input.authorizationUsed,
     balance: input.balance.toString(),
-    ...(payment.reserveRelease?.feeSplit
+    ...(payment.reserveRelease?.feeSplit || payment.exactFeeSplit
       ? {
           feeSplit: {
-            feeBps: payment.reserveRelease.feeSplit.feeBps,
-            grossAmount: payment.reserveRelease.feeSplit.grossAmount.toString(),
-            sellerAmount: payment.reserveRelease.feeSplit.sellerAmount.toString(),
-            protocolFeeAmount: payment.reserveRelease.feeSplit.protocolFeeAmount.toString(),
-            sellerPayTo: payment.reserveRelease.feeSplit.sellerPayTo,
-            protocolFeePayTo: payment.reserveRelease.feeSplit.protocolFeePayTo
+            feeBps: (payment.reserveRelease?.feeSplit ?? payment.exactFeeSplit).feeBps,
+            grossAmount: (payment.reserveRelease?.feeSplit ?? payment.exactFeeSplit).grossAmount.toString(),
+            sellerAmount: (payment.reserveRelease?.feeSplit ?? payment.exactFeeSplit).sellerAmount.toString(),
+            protocolFeeAmount: (payment.reserveRelease?.feeSplit ?? payment.exactFeeSplit).protocolFeeAmount.toString(),
+            sellerPayTo: (payment.reserveRelease?.feeSplit ?? payment.exactFeeSplit).sellerPayTo,
+            protocolFeePayTo: (payment.reserveRelease?.feeSplit ?? payment.exactFeeSplit).protocolFeePayTo
           }
         }
       : {}),
@@ -931,6 +1062,16 @@ async function verifyHostedPayment(clients, input) {
     message: payment.typedData.message,
     signature: payment.signature
   });
+  const feeSignatureValid = payment.exactFeeSplit
+    ? await verifyTypedData({
+        address: payment.feeAuthorization.from,
+        domain: payment.feeTypedData.domain,
+        types: payment.feeTypedData.types,
+        primaryType: payment.feeTypedData.primaryType,
+        message: payment.feeTypedData.message,
+        signature: payment.feeSignature
+      })
+    : true;
 
   if (!signatureValid) {
     return verificationSummary(payment, clients, {
@@ -941,21 +1082,37 @@ async function verifyHostedPayment(clients, input) {
     });
   }
 
-  const [authorizationUsed, balance] = await Promise.all([
+  if (!feeSignatureValid) {
+    return verificationSummary(payment, clients, {
+      isValid: false,
+      invalidReason: "EIP-3009 protocol fee signature verification failed.",
+      authorizationUsed: false,
+      balance: 0n
+    });
+  }
+
+  const [authorizationUsed, feeAuthorizationUsed, balance] = await Promise.all([
     readAuthorizationState(clients, payment),
+    payment.exactFeeSplit
+      ? readAuthorizationState(clients, payment, payment.feeAuthorization)
+      : Promise.resolve(false),
     readBalance(clients, payment)
   ]);
 
-  if (authorizationUsed) {
+  if (authorizationUsed || feeAuthorizationUsed) {
     return verificationSummary(payment, clients, {
       isValid: false,
-      invalidReason: "EIP-3009 authorization nonce was already used.",
-      authorizationUsed,
+      invalidReason: authorizationUsed
+        ? "EIP-3009 authorization nonce was already used."
+        : "EIP-3009 protocol fee authorization nonce was already used.",
+      authorizationUsed: Boolean(authorizationUsed || feeAuthorizationUsed),
       balance
     });
   }
 
-  if (balance < payment.authorization.value) {
+  const requiredBalance = payment.exactFeeSplit?.grossAmount ?? payment.authorization.value;
+
+  if (balance < requiredBalance) {
     return verificationSummary(payment, clients, {
       isValid: false,
       invalidReason: "Payer does not hold enough USDC for the requested x402 payment.",
@@ -984,8 +1141,11 @@ async function settleHostedPayment(clients, input) {
   }
 
   const { v, r, s } = parseSignature(payment.signature);
+  const feeSignature = payment.exactFeeSplit ? parseSignature(payment.feeSignature) : null;
 
   try {
+    let feeTransactionHash = null;
+    let feeReceipt = null;
     const transactionHash = payment.reserveRelease
       ? await clients.walletClient.writeContract({
           account: clients.account,
@@ -1029,8 +1189,54 @@ async function settleHostedPayment(clients, input) {
                 v,
                 r,
                 s
-              ]
+            ]
         })
+      : payment.exactFeeSplit
+        ? await (async () => {
+            feeTransactionHash = await clients.walletClient.writeContract({
+              account: clients.account,
+              chain: clients.chain,
+              address: payment.tokenAddress,
+              abi: USDC_EIP3009_ABI,
+              functionName: "transferWithAuthorization",
+              args: [
+                payment.feeAuthorization.from,
+                payment.feeAuthorization.to,
+                payment.feeAuthorization.value,
+                payment.feeAuthorization.validAfter,
+                payment.feeAuthorization.validBefore,
+                payment.feeAuthorization.nonce,
+                feeSignature.v,
+                feeSignature.r,
+                feeSignature.s
+              ]
+            });
+
+            if (typeof clients.publicClient.waitForTransactionReceipt === "function") {
+              feeReceipt = await retryTransientRpc(clients, "waitForTransactionReceipt", async () => {
+                return await clients.publicClient.waitForTransactionReceipt({ hash: feeTransactionHash });
+              });
+            }
+
+            return await clients.walletClient.writeContract({
+              account: clients.account,
+              chain: clients.chain,
+              address: payment.tokenAddress,
+              abi: USDC_EIP3009_ABI,
+              functionName: "transferWithAuthorization",
+              args: [
+                payment.authorization.from,
+                payment.authorization.to,
+                payment.authorization.value,
+                payment.authorization.validAfter,
+                payment.authorization.validBefore,
+                payment.authorization.nonce,
+                v,
+                r,
+                s
+              ]
+            });
+          })()
       : await clients.walletClient.writeContract({
           account: clients.account,
           chain: clients.chain,
@@ -1088,6 +1294,29 @@ async function settleHostedPayment(clients, input) {
               }
             }
           : {}),
+        ...(payment.exactFeeSplit
+          ? {
+              feeSplit: {
+                feeBps: payment.exactFeeSplit.feeBps,
+                grossAmount: payment.exactFeeSplit.grossAmount.toString(),
+                sellerAmount: payment.exactFeeSplit.sellerAmount.toString(),
+                protocolFeeAmount: payment.exactFeeSplit.protocolFeeAmount.toString(),
+                sellerPayTo: payment.exactFeeSplit.sellerPayTo,
+                protocolFeePayTo: payment.exactFeeSplit.protocolFeePayTo,
+                feeSettlementMode: payment.exactFeeSplit.feeSettlementMode
+              }
+            }
+          : {}),
+        ...(feeTransactionHash
+          ? {
+              protocolFeeTransaction: feeTransactionHash,
+              protocolFeeTxHash: feeTransactionHash,
+              transactionHashes: {
+                protocolFee: feeTransactionHash,
+                seller: transactionHash
+              }
+            }
+          : {}),
         ...(receipt
           ? {
             receipt: {
@@ -1099,7 +1328,19 @@ async function settleHostedPayment(clients, input) {
                   : receipt.blockNumber
             }
           }
-        : {})
+        : {}),
+        ...(feeReceipt
+          ? {
+              protocolFeeReceipt: {
+                status: feeReceipt.status,
+                blockHash: feeReceipt.blockHash,
+                blockNumber:
+                  typeof feeReceipt.blockNumber === "bigint"
+                    ? feeReceipt.blockNumber.toString()
+                    : feeReceipt.blockNumber
+              }
+            }
+          : {})
     };
   } catch (error) {
     const authorizationUsed = await readAuthorizationState(clients, payment).catch(() => false);
