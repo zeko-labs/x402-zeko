@@ -20,7 +20,8 @@ import {
   buildPaymentPayload,
   buildPaymentRequired,
   buildSignedEvmAuthorization,
-  createSelfHostedEvmFacilitatorHttpServer
+  createSelfHostedEvmFacilitatorHttpServer,
+  facilitatorVersionInfo
 } from "../src/index.js";
 import { encodeErrorResult } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -29,6 +30,25 @@ const BUYER_PRIVATE_KEY =
   "0x59c6995e998f97a5a0044966f094538e64d6d95f6d6b6c6d6e6f707172737475";
 const RELAYER_PRIVATE_KEY =
   "0x8b3a350cf5c34c9194ca3a9d8b2d8e5d1c4f6b3a2c1d0e9f8a7b6c5d4e3f2a1b";
+
+test("self-hosted facilitator version info exposes the deployed commit sha", () => {
+  const previous = process.env.RENDER_GIT_COMMIT;
+  process.env.RENDER_GIT_COMMIT = "abcdef1234567890";
+
+  try {
+    const version = facilitatorVersionInfo();
+    assert.equal(version.ok, true);
+    assert.equal(version.service, "zeko-x402-evm-facilitator");
+    assert.equal(version.commitSha, "abcdef1234567890");
+    assert.equal(version.source, "env");
+  } finally {
+    if (previous === undefined) {
+      delete process.env.RENDER_GIT_COMMIT;
+    } else {
+      process.env.RENDER_GIT_COMMIT = previous;
+    }
+  }
+});
 
 function sampleContext(rail) {
   return {
@@ -289,6 +309,10 @@ test("self-hosted facilitator resumes partially settled exact fee-split payloads
     ]
   });
 
+  const verification = await facilitator.verify({
+    paymentPayload: payload,
+    paymentRequirements: requirements
+  });
   const settlement = await facilitator.settle({
     paymentPayload: payload,
     paymentRequirements: requirements
@@ -297,12 +321,85 @@ test("self-hosted facilitator resumes partially settled exact fee-split payloads
     (entry) => entry[0] === "writeContract" && entry[1] === "transferWithAuthorization"
   );
 
+  assert.equal(verification.isValid, true);
+  assert.equal(verification.settlementState, "partial_settlement");
+  assert.equal(verification.recoverable, true);
+  assert.equal(verification.nextSettlementAction, "resume_seller");
   assert.equal(settlement.success, true);
   assert.equal(settlement.resumed, true);
   assert.equal(settlement.transactionHash, "0xsellertxhash");
   assert.equal(transferCalls.length, 1);
   assert.equal(transferCalls[0][3], "0x000000000000000000000000000000000000bEEF");
   assert.equal(transferCalls[0][5], sellerNonce);
+});
+
+test("self-hosted facilitator verify marks seller-settled fee-split payloads as recoverable", async () => {
+  const buyerAddress = privateKeyToAccount(BUYER_PRIVATE_KEY).address;
+  const sellerNonce = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const feeNonce = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const usedNonces = new Set([sellerNonce.toLowerCase()]);
+  const mock = {
+    publicClient: {
+      readContract: async ({ functionName, args }) => {
+        if (functionName === "authorizationState") {
+          return usedNonces.has(String(args[1]).toLowerCase());
+        }
+
+        if (functionName === "balanceOf") {
+          return 900000n;
+        }
+
+        throw new Error(`Unexpected readContract function: ${functionName}`);
+      }
+    },
+    walletClient: {
+      writeContract: async () => {
+        throw new Error("verify should not broadcast");
+      }
+    }
+  };
+  const rail = buildBaseMainnetUsdcRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    protocolFeePayTo: "0x000000000000000000000000000000000000face",
+    feeBps: 100,
+    amount: "0.50"
+  });
+  const intent = buildBaseUsdcExactEip3009Intent({
+    from: buyerAddress,
+    to: rail.payTo,
+    amount: "0.495",
+    nonce: sellerNonce
+  });
+  const feeIntent = buildBaseUsdcExactEip3009Intent({
+    from: buyerAddress,
+    to: "0x000000000000000000000000000000000000face",
+    amount: "0.005",
+    nonce: feeNonce
+  });
+  const { requirements, payload } = await buildSignedPayment({ rail, intent, feeIntent });
+  const facilitator = new SelfHostedEvmFacilitator({
+    networks: [
+      {
+        networkId: "eip155:8453",
+        rpcUrl: "https://base.example",
+        relayerPrivateKey: RELAYER_PRIVATE_KEY,
+        publicClient: mock.publicClient,
+        walletClient: mock.walletClient
+      }
+    ]
+  });
+
+  const verification = await facilitator.verify({
+    paymentPayload: payload,
+    paymentRequirements: requirements
+  });
+
+  assert.equal(verification.isValid, true);
+  assert.equal(verification.settlementState, "partial_settlement");
+  assert.equal(verification.recoverable, true);
+  assert.equal(verification.nextSettlementAction, "resume_protocol_fee");
+  assert.equal(verification.authorizationUsed, true);
+  assert.equal(verification.feeAuthorizationUsed, false);
 });
 
 test("self-hosted facilitator treats fully settled exact fee-split retries as idempotent success", async () => {
@@ -364,11 +461,18 @@ test("self-hosted facilitator treats fully settled exact fee-split retries as id
     ]
   });
 
+  const verification = await facilitator.verify({
+    paymentPayload: payload,
+    paymentRequirements: requirements
+  });
   const settlement = await facilitator.settle({
     paymentPayload: payload,
     paymentRequirements: requirements
   });
 
+  assert.equal(verification.isValid, true);
+  assert.equal(verification.settlementState, "already_settled");
+  assert.equal(verification.duplicate, true);
   assert.equal(settlement.success, true);
   assert.equal(settlement.duplicate, true);
   assert.equal(settlement.settlementState, "already_settled");

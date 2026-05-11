@@ -1035,7 +1035,12 @@ function verificationSummary(payment, clients, input) {
     amount: payment.accepted.amount,
     relayer: clients.account.address,
     authorizationUsed: input.authorizationUsed,
+    ...(input.feeAuthorizationUsed !== undefined ? { feeAuthorizationUsed: input.feeAuthorizationUsed } : {}),
     balance: input.balance.toString(),
+    ...(input.settlementState ? { settlementState: input.settlementState } : {}),
+    ...(input.recoverable !== undefined ? { recoverable: input.recoverable } : {}),
+    ...(input.nextSettlementAction ? { nextSettlementAction: input.nextSettlementAction } : {}),
+    ...(input.duplicate !== undefined ? { duplicate: input.duplicate } : {}),
     ...(payment.reserveRelease?.feeSplit || payment.exactFeeSplit
       ? {
           feeSplit: {
@@ -1075,6 +1080,39 @@ async function verifyHostedPayment(clients, input) {
   }
 
   const usage = await readHostedPaymentUsage(clients, payment);
+
+  if (payment.exactFeeSplit && (usage.authorizationUsed || usage.feeAuthorizationUsed)) {
+    const outstandingAmount =
+      (usage.authorizationUsed ? 0n : payment.authorization.value) +
+      (usage.feeAuthorizationUsed ? 0n : payment.feeAuthorization.value);
+    const bothUsed = usage.authorizationUsed && usage.feeAuthorizationUsed;
+
+    if (!bothUsed && usage.balance < outstandingAmount) {
+      return verificationSummary(payment, clients, {
+        isValid: false,
+        invalidReason: "Payer does not hold enough USDC for the unsettled x402 payment leg.",
+        authorizationUsed: usage.authorizationUsed,
+        feeAuthorizationUsed: usage.feeAuthorizationUsed,
+        balance: usage.balance,
+        settlementState: "partial_settlement",
+        recoverable: false,
+        nextSettlementAction: usage.authorizationUsed ? "resume_protocol_fee" : "resume_seller"
+      });
+    }
+
+    return verificationSummary(payment, clients, {
+      isValid: true,
+      authorizationUsed: usage.authorizationUsed,
+      feeAuthorizationUsed: usage.feeAuthorizationUsed,
+      balance: usage.balance,
+      settlementState: bothUsed ? "already_settled" : "partial_settlement",
+      recoverable: !bothUsed,
+      duplicate: bothUsed,
+      ...(bothUsed
+        ? {}
+        : { nextSettlementAction: usage.authorizationUsed ? "resume_protocol_fee" : "resume_seller" })
+    });
+  }
 
   if (usage.authorizationUsed || usage.feeAuthorizationUsed) {
     return verificationSummary(payment, clients, {
@@ -1503,6 +1541,22 @@ function sendJson(response, statusCode, body) {
   response.end(JSON.stringify(body));
 }
 
+export function facilitatorVersionInfo() {
+  const commitSha =
+    process.env.RENDER_GIT_COMMIT ??
+    process.env.GIT_COMMIT ??
+    process.env.COMMIT_SHA ??
+    process.env.SOURCE_VERSION ??
+    null;
+  return {
+    ok: true,
+    service: "zeko-x402-evm-facilitator",
+    version: "0.1.0",
+    commitSha,
+    source: commitSha ? "env" : "unavailable"
+  };
+}
+
 export class SelfHostedEvmFacilitator {
   constructor(input = {}) {
     const networks = Array.isArray(input.networks) ? input.networks : [];
@@ -1582,7 +1636,12 @@ export function createSelfHostedEvmFacilitatorHttpServer(input = {}) {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
 
       if (request.method === "GET" && url.pathname === "/health") {
-        sendJson(response, 200, { ok: true });
+        sendJson(response, 200, facilitatorVersionInfo());
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/version") {
+        sendJson(response, 200, facilitatorVersionInfo());
         return;
       }
 
