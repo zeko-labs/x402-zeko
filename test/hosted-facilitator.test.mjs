@@ -12,6 +12,8 @@ import {
   buildBaseUsdcReserveReleaseFeeOnReserveIntent,
   buildBaseUsdcReserveReleaseFeeIntent,
   buildBaseUsdcReserveReleaseIntent,
+  buildCustomEvmExactEip3009Intent,
+  buildCustomEvmExactEip3009Rail,
   buildEthereumMainnetUsdcReserveReleaseRail,
   buildEthereumMainnetUsdcExactEip3009Intent,
   buildEthereumUsdcReserveReleaseIntent,
@@ -65,7 +67,7 @@ function buildSignedPayload(input) {
   };
 }
 
-test("builds both Base and Ethereum mainnet USDC rails and intents", () => {
+test("builds Base, Ethereum, and custom EVM USDC rails and intents", () => {
   const baseRail = buildBaseMainnetUsdcRail({
     payTo: "0x000000000000000000000000000000000000bEEF",
     amount: "0.50"
@@ -79,6 +81,27 @@ test("builds both Base and Ethereum mainnet USDC rails and intents", () => {
     to: "0x000000000000000000000000000000000000bEEF",
     amount: "1.25"
   });
+  const customRail = buildCustomEvmExactEip3009Rail({
+    networkId: "eip155:4217",
+    chainName: "Tempo",
+    tokenAddress: "0x20c000000000000000000000b9537d11c60e8b50",
+    assetSymbol: "USDC.e",
+    decimals: 6,
+    eip712Name: "Bridged USDC (Stargate)",
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    amount: "0.50"
+  });
+  const customIntent = buildCustomEvmExactEip3009Intent({
+    networkId: "eip155:4217",
+    chainName: "Tempo",
+    tokenAddress: "0x20c000000000000000000000b9537d11c60e8b50",
+    assetSymbol: "USDC.e",
+    decimals: 6,
+    eip712Name: "Bridged USDC (Stargate)",
+    from: "0x1111111111111111111111111111111111111111",
+    to: "0x000000000000000000000000000000000000bEEF",
+    amount: "1.25"
+  });
 
   assert.equal(baseRail.network, "eip155:8453");
   assert.equal(baseRail.extensions.evm.defaultFacilitator, "cdp");
@@ -86,6 +109,9 @@ test("builds both Base and Ethereum mainnet USDC rails and intents", () => {
   assert.equal(ethRail.extensions.evm.requiresCustomFacilitator, true);
   assert.equal(ethIntent.network.networkId, "eip155:1");
   assert.equal(ethIntent.typedData.domain.verifyingContract, ETHEREUM_MAINNET_USDC.asset.address);
+  assert.equal(customRail.network, "eip155:4217");
+  assert.equal(customRail.extensions.evm.requiresCustomFacilitator, true);
+  assert.equal(customIntent.typedData.domain.chainId, 4217);
 });
 
 test("maps internal Base x402 payloads into hosted facilitator request shape", () => {

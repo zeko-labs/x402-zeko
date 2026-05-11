@@ -38,6 +38,64 @@ export const ETHEREUM_MAINNET_USDC = Object.freeze({
   transferMethod: "EIP-3009"
 });
 
+function chainIdFromNetworkId(networkId) {
+  if (typeof networkId !== "string" || !networkId.startsWith("eip155:")) {
+    throw new Error("networkId must use CAIP-2 EVM format, for example eip155:8453.");
+  }
+
+  const chainId = Number(networkId.slice("eip155:".length));
+
+  if (!Number.isInteger(chainId) || chainId <= 0) {
+    throw new Error(`Invalid EVM chain id in networkId: ${networkId}`);
+  }
+
+  return chainId;
+}
+
+export function buildCustomEvmTokenTarget(input) {
+  const networkId = input?.networkId;
+  const parsedChainId = chainIdFromNetworkId(networkId);
+  const chainId = input?.chainId ?? parsedChainId;
+
+  if (chainId !== parsedChainId) {
+    throw new Error("chainId must match the CAIP-2 reference in networkId.");
+  }
+
+  if (typeof input?.chainName !== "string" || input.chainName.length === 0) {
+    throw new Error("chainName is required for a custom EVM token target.");
+  }
+
+  if (typeof input?.tokenAddress !== "string" || input.tokenAddress.length === 0) {
+    throw new Error("tokenAddress is required for a custom EVM token target.");
+  }
+
+  if (typeof input?.assetSymbol !== "string" || input.assetSymbol.length === 0) {
+    throw new Error("assetSymbol is required for a custom EVM token target.");
+  }
+
+  if (!Number.isInteger(input?.decimals) || input.decimals < 0) {
+    throw new Error("decimals must be a non-negative integer for a custom EVM token target.");
+  }
+
+  if (typeof input?.eip712Name !== "string" || input.eip712Name.length === 0) {
+    throw new Error("eip712Name is required for custom EIP-3009 rails.");
+  }
+
+  return Object.freeze({
+    networkId,
+    chainId,
+    chainName: input.chainName,
+    asset: {
+      symbol: input.assetSymbol,
+      decimals: input.decimals,
+      standard: input.assetStandard ?? "erc20",
+      address: input.tokenAddress
+    },
+    eip712Name: input.eip712Name,
+    transferMethod: input.transferMethod ?? "EIP-3009"
+  });
+}
+
 function buildExactEip3009Rail(target, input) {
   const hasFeeSplit =
     typeof input?.protocolFeePayTo === "string" ||
@@ -185,6 +243,23 @@ function buildReserveReleaseRail(target, input) {
         ...(typeof input.maxTimeoutSeconds === "number" ? { maxTimeoutSeconds: input.maxTimeoutSeconds } : {})
       }
     }
+  });
+}
+
+export function buildCustomEvmExactEip3009Rail(input) {
+  if (typeof input?.payTo !== "string" || input.payTo.length === 0) {
+    throw new Error("payTo is required for a custom EVM EIP-3009 rail.");
+  }
+
+  const target = buildCustomEvmTokenTarget(input);
+
+  return buildExactEip3009Rail(target, {
+    ...input,
+    description:
+      input.description ??
+      `${target.chainName} ${target.asset.symbol} rail using custom x402 exact EIP-3009 settlement.`,
+    defaultFacilitator: input.defaultFacilitator ?? "self-hosted",
+    requiresCustomFacilitator: input.requiresCustomFacilitator ?? true
   });
 }
 

@@ -98,6 +98,22 @@ function normalizeEvmNetwork() {
     };
   }
 
+  if (requested === "tempo" || requested === "tempo-mainnet" || requested === "eip155:4217") {
+    return {
+      name: "tempo",
+      networkId: "eip155:4217",
+      defaultFacilitator: "custom"
+    };
+  }
+
+  if (requested === "arc-testnet" || requested === "eip155:5042002") {
+    return {
+      name: "arc-testnet",
+      networkId: "eip155:5042002",
+      defaultFacilitator: "custom"
+    };
+  }
+
   return {
     name: requested,
     networkId: requested,
@@ -117,12 +133,32 @@ function resolveSelfHostedEvm(network) {
             "X402_EVM_RPC_URLS",
             "X402_EVM_RPC_URL"
           ])
+        : network.name === "tempo"
+          ? readOptionalEnvList([
+              "X402_TEMPO_RPC_URLS",
+              "X402_TEMPO_RPC_URL",
+              "TEMPO_RPC_URL",
+              "X402_EVM_RPC_URLS",
+              "X402_EVM_RPC_URL"
+            ])
+          : network.name === "arc-testnet"
+            ? readOptionalEnvList([
+                "X402_ARC_RPC_URLS",
+                "X402_ARC_RPC_URL",
+                "ARC_RPC_URL",
+                "X402_EVM_RPC_URLS",
+                "X402_EVM_RPC_URL"
+              ])
         : readOptionalEnvList(["X402_EVM_RPC_URLS", "X402_EVM_RPC_URL"]);
   const relayerPrivateKey = readFirstEnv(
     network.name === "base"
       ? ["X402_BASE_RELAYER_PRIVATE_KEY", "X402_EVM_RELAYER_PRIVATE_KEY", "EVM_RELAYER_PRIVATE_KEY"]
       : network.name === "ethereum"
         ? ["X402_ETHEREUM_RELAYER_PRIVATE_KEY", "X402_EVM_RELAYER_PRIVATE_KEY", "EVM_RELAYER_PRIVATE_KEY"]
+        : network.name === "tempo"
+          ? ["X402_TEMPO_RELAYER_PRIVATE_KEY", "X402_EVM_RELAYER_PRIVATE_KEY", "EVM_RELAYER_PRIVATE_KEY"]
+          : network.name === "arc-testnet"
+            ? ["X402_ARC_RELAYER_PRIVATE_KEY", "X402_EVM_RELAYER_PRIVATE_KEY", "EVM_RELAYER_PRIVATE_KEY"]
         : ["X402_EVM_RELAYER_PRIVATE_KEY", "EVM_RELAYER_PRIVATE_KEY"]
   );
 
@@ -160,6 +196,20 @@ function resolveEvmPayTo(network) {
           readOptionalEnv("X402_EVM_TREASURY_ADDRESS")
         )
       )
+    );
+  }
+
+  if (network.name === "tempo") {
+    return readOptionalEnv(
+      "X402_TEMPO_PAY_TO",
+      readOptionalEnv("X402_EVM_PAY_TO", readOptionalEnv("X402_EVM_TREASURY_ADDRESS"))
+    );
+  }
+
+  if (network.name === "arc-testnet") {
+    return readOptionalEnv(
+      "X402_ARC_PAY_TO",
+      readOptionalEnv("X402_EVM_PAY_TO", readOptionalEnv("X402_EVM_TREASURY_ADDRESS"))
     );
   }
 

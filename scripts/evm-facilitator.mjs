@@ -29,6 +29,16 @@ const ETHEREUM_RPC_ENV_NAMES = [
   "QUICKNODE_ETHEREUM_RPC_URL",
   "ALCHEMY_ETHEREUM_RPC_URL"
 ];
+const TEMPO_RPC_ENV_NAMES = [
+  "X402_TEMPO_RPC_URLS",
+  "X402_TEMPO_RPC_URL",
+  "TEMPO_RPC_URL"
+];
+const ARC_RPC_ENV_NAMES = [
+  "X402_ARC_RPC_URLS",
+  "X402_ARC_RPC_URL",
+  "ARC_RPC_URL"
+];
 const GENERIC_EVM_RPC_ENV_NAMES = ["X402_EVM_RPC_URLS", "X402_EVM_RPC_URL"];
 
 function readOptionalEnv(name, fallback = "") {
@@ -236,6 +246,42 @@ function buildNetworkConfigs() {
     });
   }
 
+  const tempoRpcEnvNames = [...TEMPO_RPC_ENV_NAMES, ...GENERIC_EVM_RPC_ENV_NAMES];
+  const tempoRpcUrls = readRpcEnvList(tempoRpcEnvNames);
+  const tempoRelayerPrivateKey = readOptionalEnv(
+    "X402_TEMPO_RELAYER_PRIVATE_KEY",
+    genericRelayerPrivateKey
+  );
+
+  if (tempoRpcUrls.length > 0 && tempoRelayerPrivateKey) {
+    configs.push({
+      networkId: "eip155:4217",
+      rpcUrl: tempoRpcUrls[0],
+      rpcUrls: tempoRpcUrls,
+      rpcEnvNames: detectedEnvNames(tempoRpcEnvNames),
+      relayerPrivateKey: tempoRelayerPrivateKey,
+      ...rpcRuntimeConfig
+    });
+  }
+
+  const arcRpcEnvNames = [...ARC_RPC_ENV_NAMES, ...GENERIC_EVM_RPC_ENV_NAMES];
+  const arcRpcUrls = readRpcEnvList(arcRpcEnvNames);
+  const arcRelayerPrivateKey = readOptionalEnv(
+    "X402_ARC_RELAYER_PRIVATE_KEY",
+    genericRelayerPrivateKey
+  );
+
+  if (arcRpcUrls.length > 0 && arcRelayerPrivateKey) {
+    configs.push({
+      networkId: "eip155:5042002",
+      rpcUrl: arcRpcUrls[0],
+      rpcUrls: arcRpcUrls,
+      rpcEnvNames: detectedEnvNames(arcRpcEnvNames),
+      relayerPrivateKey: arcRelayerPrivateKey,
+      ...rpcRuntimeConfig
+    });
+  }
+
   if (configs.length > 0) {
     return configs;
   }
@@ -243,7 +289,13 @@ function buildNetworkConfigs() {
   const selectedNetworkId =
     requested === "ethereum" || requested === "eth" || requested === "mainnet" || requested === "eip155:1"
       ? "eip155:1"
-      : "eip155:8453";
+      : requested === "tempo" || requested === "tempo-mainnet" || requested === "eip155:4217"
+        ? "eip155:4217"
+        : requested === "arc-testnet" || requested === "eip155:5042002"
+          ? "eip155:5042002"
+          : requested.startsWith("eip155:")
+            ? requested
+            : "eip155:8453";
 
   if (genericRpcUrls.length === 0 || !genericRelayerPrivateKey) {
     throw new Error(

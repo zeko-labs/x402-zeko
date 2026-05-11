@@ -9,6 +9,7 @@ It is the protocol and settlement layer, not the app layer.
 - Core x402 helpers: `402 Payment Required`, payment headers, rails, payloads, receipts
 - V2 interop helpers: payment-identifier, signed offer/receipt, gas-sponsoring, and official x402 header adapters
 - EVM rails: Ethereum and Base USDC exact settlement plus reserve-release flows
+- Custom EVM rails: explicit CAIP-2 EIP-3009 rail builders for emerging payout chains
 - Zeko rail: zkApp settlement helpers, witness store/service, and client helpers
 - Self-hosted facilitator: local or hosted `/verify` and `/settle` service for EVM rails
 - EVM contracts: reserve-release escrow contracts and Sepolia deploy/smoke scripts
@@ -94,4 +95,5 @@ pnpm doctor:rails
 - [Multi-rail paid resource](/Users/evankereiakes/Documents/Codex/zeko-x402/docs/multirail-paid-resource.md)
 - [Adapter architecture](/Users/evankereiakes/Documents/Codex/zeko-x402/docs/adapter-architecture.md)
 - [Tenant onboarding](/Users/evankereiakes/Documents/Codex/zeko-x402/docs/tenant-onboarding.md)
+- [Tempo and Arc payout options](/Users/evankereiakes/Documents/Codex/zeko-x402/docs/tempo-arc-payout-options.md)
 - [OpenClaw app handoff](/Users/evankereiakes/Documents/Codex/zeko-x402/docs/openclaw-agent-handoff.md)

@@ -7,7 +7,8 @@ import {
   BASE_MAINNET_USDC,
   ETHEREUM_MAINNET_USDC,
   MAX_RESERVE_RELEASE_PROTOCOL_FEE_BPS,
-  ZEKO_TESTNET_NETWORK
+  ZEKO_TESTNET_NETWORK,
+  buildCustomEvmTokenTarget
 } from "./targets.js";
 
 function shortId(value) {
@@ -270,6 +271,15 @@ export function buildEthereumMainnetUsdcExactEip3009Intent(input) {
   return buildExactEip3009Intent(ETHEREUM_MAINNET_USDC, {
     ...input,
     primitive: "evm-ethereum-mainnet-usdc-exact-eip3009-v1"
+  });
+}
+
+export function buildCustomEvmExactEip3009Intent(input) {
+  const target = buildCustomEvmTokenTarget(input);
+
+  return buildExactEip3009Intent(target, {
+    ...input,
+    primitive: input.primitive ?? "evm-custom-token-exact-eip3009-v1"
   });
 }
 
