@@ -1,4 +1,8 @@
 import { canonicalDigest } from "./digest.js";
+import {
+  resolveX402PaymentIdentifier,
+  withPaymentIdentifierExtension
+} from "./x402-v2.js";
 
 export const X402_PAYMENT_REQUIRED_HEADER = "PAYMENT-REQUIRED";
 export const X402_PAYMENT_SIGNATURE_HEADER = "PAYMENT-SIGNATURE";
@@ -11,11 +15,14 @@ export const X402_SERVICE_FEATURES = [
   "multi-rail",
   "exact-scheme",
   "duplicate-settlement-protection",
+  "payment-identifier-extension",
+  "offer-receipt-extension",
   "proof-bundle-attestation",
   "programmable-privacy",
   "evm-settlement",
   "zeko-settlement",
-  "signed-authorization-payloads"
+  "signed-authorization-payloads",
+  "gasless-evm-extension"
 ];
 
 function isRecord(value) {
@@ -100,7 +107,12 @@ export function decodeBase64Json(value) {
 }
 
 export function buildAuthorizationDigest(payload) {
-  return canonicalDigest(payload).sha256Hex;
+  if (!isRecord(payload)) {
+    throw new Error("Authorization digest payload must be an object.");
+  }
+
+  const { x402Version: _x402Version, ...digestPayload } = payload;
+  return canonicalDigest(digestPayload).sha256Hex;
 }
 
 export function buildPaymentContextDigest(payload) {
@@ -119,7 +131,8 @@ export function buildPaymentContextDigest(payload) {
       ? { turnId: payload.turnId }
       : {}),
     issuedAtIso: payload.issuedAtIso,
-    expiresAtIso: payload.expiresAtIso
+    expiresAtIso: payload.expiresAtIso,
+    ...(isRecord(payload.extensions) ? { extensions: payload.extensions } : {})
   }).sha256Hex;
 }
 
@@ -173,6 +186,12 @@ export function assertPaymentPayload(value) {
   const feeAuthorization = assertAuthorization(value.feeAuthorization, settlementRail);
 
   return {
+    x402Version:
+      value.x402Version === 2 || value.version === "2"
+        ? 2
+        : (() => {
+            throw new Error("x402 payment payload must declare x402Version=2.");
+          })(),
     protocol: value.protocol === "x402" ? "x402" : (() => {
       throw new Error("x402 payment payload must declare protocol=x402.");
     })(),
@@ -235,6 +254,7 @@ export function assertPaymentPayload(value) {
       : {}),
     ...(authorization ? { authorization } : {}),
     ...(feeAuthorization ? { feeAuthorization } : {}),
+    ...(isRecord(value.extensions) ? { extensions: value.extensions } : {}),
     authorizationDigest: typeof value.authorizationDigest === "string" && value.authorizationDigest.length > 0
       ? value.authorizationDigest
       : (() => {
@@ -255,7 +275,24 @@ export function buildPaymentPayload(input) {
     inferSettlementRail(input.networkId ?? option?.network);
   const authorization = assertAuthorization(input.authorization, settlementRail);
   const feeAuthorization = assertAuthorization(input.feeAuthorization, settlementRail);
+  const paymentIdentifier =
+    typeof input.paymentIdentifier === "string" && input.paymentIdentifier.length > 0
+      ? input.paymentIdentifier
+      : typeof input.idempotencyKey === "string" && input.idempotencyKey.length > 0
+        ? input.idempotencyKey
+        : typeof input.paymentId === "string" && input.paymentId.length > 0 && isRecord(input.extensions)
+          ? input.paymentId
+          : undefined;
+  const baseExtensions =
+    isRecord(input.extensions) || paymentIdentifier
+      ? input.extensions ?? {}
+      : undefined;
+  const extensions =
+    baseExtensions && paymentIdentifier
+      ? withPaymentIdentifierExtension(baseExtensions, paymentIdentifier)
+      : baseExtensions;
   const payloadWithoutDigest = {
+    x402Version: 2,
     protocol: "x402",
     version: "2",
     requestId: input.requestId,
@@ -286,14 +323,20 @@ export function buildPaymentPayload(input) {
         sessionId: input.sessionId,
         ...(typeof input.turnId === "string" && input.turnId.length > 0 ? { turnId: input.turnId } : {}),
         issuedAtIso,
-        expiresAtIso
+        expiresAtIso,
+        ...(extensions ? { extensions } : {})
       }),
     ...(authorization ? { authorization } : {}),
-    ...(feeAuthorization ? { feeAuthorization } : {})
+    ...(feeAuthorization ? { feeAuthorization } : {}),
+    ...(extensions ? { extensions } : {})
   };
 
   return assertPaymentPayload({
     ...payloadWithoutDigest,
     authorizationDigest: buildAuthorizationDigest(payloadWithoutDigest)
   });
+}
+
+export function resolvePaymentIdForSettlement(payload) {
+  return resolveX402PaymentIdentifier(payload);
 }

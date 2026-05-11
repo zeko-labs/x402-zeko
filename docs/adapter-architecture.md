@@ -47,6 +47,17 @@ Rule of thumb:
 - if another app could reuse it, keep it in `zeko-x402`
 - if it depends on your app's workflow or output format, keep it in the adapter repo
 
+## V2 integration guidance
+
+For apps integrating `zeko-x402`, keep the x402 V2 protocol boundary clean:
+
+- keep V2 headers and CAIP-2 network IDs at the protocol layer
+- treat idempotency and duplicate-payment handling as shared x402 infrastructure, not app-only logic
+- keep signed offers and signed receipts generic at the x402 layer, while any Zeko anchoring or reputation logic stays in the app
+- keep gasless EVM transfer support, including Permit2 and EIP-2612 sponsorship, in the x402 rail/facilitator layer
+- keep fee policy, pricing policy, and marketplace economics in the app layer
+- keep reserve-release field names generic and reusable, not app-branded
+
 ## Safest hosted model
 
 The hosted service should not sponsor arbitrary third-party gas.

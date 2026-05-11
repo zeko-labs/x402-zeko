@@ -5,6 +5,7 @@ import {
   sameAsset,
   stripAuthorizationDigest
 } from "./protocol.js";
+import { validateX402PaymentIdentifier } from "./x402-v2.js";
 
 export const X402_CATALOG_ROUTE = "/.well-known/x402.json";
 export const X402_RESOURCE_ROUTE = "/api/x402/proof";
@@ -80,6 +81,10 @@ function buildAccept(input, rail) {
     },
     extensions: rail.extensions ?? {}
   };
+}
+
+function normalizeExtensions(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
 }
 
 function findMatchingOption(requirements, payload) {
@@ -183,6 +188,7 @@ export function buildPaymentRequired(input) {
   const descriptor = buildServiceDescriptor(input);
   const rails = normalizeRails(input.rails);
   const accepts = rails.map((rail) => buildAccept(input, rail));
+  const extensions = normalizeExtensions(input.extensions);
   const requestId = buildRequestId({
     serviceId: input.serviceId,
     sessionId: input.sessionId,
@@ -194,10 +200,12 @@ export function buildPaymentRequired(input) {
       asset: option.asset,
       amount: option.amount,
       payTo: option.payTo
-    }))
+    })),
+    ...(extensions ? { extensions } : {})
   });
 
   return {
+    x402Version: 2,
     protocol: "x402",
     version: "2",
     requestId,
@@ -209,7 +217,8 @@ export function buildPaymentRequired(input) {
     seller: {
       serviceId: input.serviceId
     },
-    accepts
+    accepts,
+    ...(extensions ? { extensions } : {})
   };
 }
 
@@ -220,6 +229,7 @@ export function buildCatalog(input) {
   return {
     protocol: "x402",
     version: "2",
+    x402Version: 2,
     serviceId: input.serviceId,
     resource: {
       chain: "zeko-service",
@@ -236,7 +246,8 @@ export function buildCatalog(input) {
         resource: descriptor.resourceUrl,
         description: requirements.description,
         mimeType: requirements.mimeType,
-        accepts: requirements.accepts
+        accepts: requirements.accepts,
+        ...(normalizeExtensions(requirements.extensions) ? { extensions: requirements.extensions } : {})
       }
     ],
     features: [...X402_SERVICE_FEATURES]
@@ -249,6 +260,7 @@ export function verifyPayment(input) {
   const issuedAt = Date.parse(input.payload.issuedAtIso);
   const expiresAt = Date.parse(input.payload.expiresAtIso);
   const now = input.now ?? Date.now();
+  const paymentIdentifierValidation = validateX402PaymentIdentifier(input.payload, input.requirements);
   const reason =
     input.payload.requestId !== input.requirements.requestId
       ? "Payment payload requestId does not match the advertised x402 payment requirement."
@@ -263,9 +275,11 @@ export function verifyPayment(input) {
               : Number.isNaN(expiresAt)
                 ? "Payment payload expiresAtIso is invalid."
                 : expiresAt < issuedAt
-                  ? "Payment payload expiresAtIso must be after issuedAtIso."
-                  : expiresAt < now
-                    ? "Payment payload is expired."
+                ? "Payment payload expiresAtIso must be after issuedAtIso."
+                : expiresAt < now
+                  ? "Payment payload is expired."
+                  : paymentIdentifierValidation.valid !== true
+                    ? paymentIdentifierValidation.errors?.[0] ?? "Payment payload does not satisfy the payment-identifier extension."
                     : expectedDigest !== input.payload.authorizationDigest
                       ? "Payment payload authorizationDigest does not match the canonical payload digest."
                       : undefined;
@@ -292,6 +306,7 @@ export function verifyPayment(input) {
 
 export function buildSettlementResponse(input) {
   const receiptWithoutDigest = {
+    x402Version: 2,
     ok: true,
     duplicate: input.duplicate,
     requestId: input.payload.requestId,
@@ -317,7 +332,8 @@ export function buildSettlementResponse(input) {
       ...(input.settlementReference ? { reference: input.settlementReference } : {}),
       ...(input.zeko ? { zeko: input.zeko } : {}),
       ...(input.evm ? { evm: input.evm } : {})
-    }
+    },
+    ...(normalizeExtensions(input.extensions) ? { extensions: input.extensions } : {})
   };
 
   return {
