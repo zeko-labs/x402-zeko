@@ -6,7 +6,7 @@ This note records the current integration posture for adding Tempo and Arc as x4
 
 `zeko-x402` can advertise any EVM chain using CAIP-2 network ids such as `eip155:4217`. The package now exposes generic custom EVM EIP-3009 builders for emerging USDC-like payout chains, but Tempo and Arc should stay behind explicit self-hosted or custom facilitator configuration until their live token authorization behavior is verified.
 
-Ethereum and Base remain the verified first-class production rails in this repo. Tempo and Arc are candidate payout rails.
+Ethereum and Base remain the verified first-class production rails in this repo. Tempo and Arc are candidate payout rails. For Arc agentic payments specifically, Circle's public nanopayments reference points to Circle Gateway batching as the production-shaped path rather than one onchain transfer per request.
 
 ## What Is Known
 
@@ -20,6 +20,16 @@ Arc official docs currently publish Arc Testnet connection details:
 - Testnet USDC contract: `0x3600000000000000000000000000000000000000`
 
 Arc mainnet should not be hardcoded here until official mainnet chain id, RPC, explorer, token address, and token authorization method are published and verified.
+
+Circle's May 2026 Arc nanopayments write-up shows a useful Arc Testnet pattern:
+
+- x402 handles the HTTP `402 Payment Required` negotiation.
+- Buyers sign EIP-3009-style payment authorizations locally.
+- Circle Gateway verifies those signatures offchain in less than a second and queues them in a virtual ledger.
+- Settlement is batched onchain later on Arc Testnet with USDC as the payment currency.
+- Sellers see Gateway balances and can withdraw to Arc or supported chains such as Base and Ethereum.
+
+That changes the practical recommendation: direct EIP-3009 settlement is acceptable as a low-level compatibility smoke only when the token ABI supports it, but Arc sub-cent agent payments should use a Circle Gateway or `@circle-fin/x402-batching` adapter.
 
 The `arc_agent_nanopayments` repo is helpful as an app-layer pattern: Zeko proof completion triggers an app-mediated Arc settlement or relay. It is not a drop-in x402 facilitator implementation.
 
@@ -36,7 +46,7 @@ The `arc_agent_nanopayments` repo is helpful as an app-layer pattern: Zeko proof
 - Whether Tempo or Arc is offered to a given tenant.
 - Seller pricing, fees, minimums, and payout policy.
 - Zeko proof completion watching and release/refund policy.
-- Arc-specific Circle Gateway or nanopayment relay calls.
+- Arc-specific Circle Gateway or `@circle-fin/x402-batching` relay calls.
 - Any non-EIP-3009 settlement path such as Permit2, EIP-2612, or a chain-specific gateway contract.
 
 ## Custom EVM Smoke Path
@@ -69,7 +79,7 @@ X402_TEMPO_PAY_TO=0x... \
 pnpm smoke:evm-flow
 ```
 
-The Arc selector is intentionally testnet-only until Arc mainnet details are official:
+The Arc selector is intentionally testnet-only until Arc mainnet details are official. Treat this as an ABI and facilitator compatibility smoke, not as the recommended Arc nanopayment architecture:
 
 ```bash
 X402_EVM_NETWORK=arc-testnet \
@@ -81,7 +91,19 @@ X402_ARC_PAY_TO=0x... \
 pnpm smoke:evm-flow
 ```
 
-These smokes assume the token supports `authorizationState(...)` and `transferWithAuthorization(...)`. If the chain's USDC path is Permit2, EIP-2612, or Circle Gateway based, the right next step is a new generic x402 V2 settlement adapter rather than pretending the EIP-3009 facilitator can settle it.
+These smokes assume the token supports `authorizationState(...)` and `transferWithAuthorization(...)`. If the chain's USDC path is Permit2, EIP-2612, or Circle Gateway based, the right next step is a new generic x402 V2 settlement adapter rather than pretending the EIP-3009 facilitator can settle it. For Arc, current Circle guidance points to Gateway batching for high-frequency sub-cent payments.
+
+## Arc Gateway Adapter Direction
+
+The adapter should live above the core EVM facilitator path:
+
+- The app or adapter offers an x402 payment requirement for an Arc Gateway-backed payment option.
+- The buyer signs locally using Circle's batching client.
+- The seller/app verifies and queues the authorization through Circle Gateway.
+- Zeko proof completion can still be the app-level condition that marks work fulfilled or releases the next workflow step.
+- Settlement and withdrawal are handled through Circle Gateway, with Arc as the stablecoin-native settlement environment.
+
+In `zeko-x402`, the protocol-level work should be generic: expose rail metadata, signed offer and receipt fields, idempotency, proof/release metadata, and a future Gateway-shaped facilitator interface. App-specific routing, dashboards, pricing, seller policies, and Zeko proof watchers belong in the consuming app or adapter repo.
 
 ## Production Checklist
 
@@ -89,4 +111,4 @@ These smokes assume the token supports `authorizationState(...)` and `transferWi
 - Probe the token ABI for `authorizationState` and `transferWithAuthorization`.
 - Confirm EIP-712 domain name and version by reading the token or official docs.
 - Run a funded exact-settlement smoke through the self-hosted facilitator.
-- If EIP-3009 is unavailable, implement the Permit2, EIP-2612, or gateway settlement path before advertising it as a live payout rail.
+- If EIP-3009 is unavailable or uneconomical for the use case, implement the Permit2, EIP-2612, or Gateway batching path before advertising it as a live payout rail.

@@ -35,7 +35,7 @@ The package also exposes custom EVM EIP-3009 rail builders for candidate payout 
 - Tempo smoke shortcut: `pnpm smoke:tempo-flow`
 - Arc Testnet smoke shortcut: `pnpm smoke:arc-testnet-flow`
 
-Tempo currently uses a custom/self-hosted facilitator path. Arc is testnet-only in this repo until official mainnet details are published.
+Tempo currently uses a custom/self-hosted facilitator path. Arc is testnet-only in this repo until official mainnet details are published. For Arc nanopayments, Circle's reference architecture uses Circle Gateway batching with x402 and local EIP-3009 authorizations, so the direct self-hosted EIP-3009 smoke should be treated as a compatibility check rather than the recommended production Arc payment flow.
 
 ## Self-hosted relayer
 
