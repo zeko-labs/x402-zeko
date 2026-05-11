@@ -55,7 +55,7 @@ function chainIdFromNetworkId(networkId) {
 export function buildCustomEvmTokenTarget(input) {
   const networkId = input?.networkId;
   const parsedChainId = chainIdFromNetworkId(networkId);
-  const chainId = input?.chainId ?? parsedChainId;
+  const chainId = input?.chainId !== undefined ? Number(input.chainId) : parsedChainId;
 
   if (chainId !== parsedChainId) {
     throw new Error("chainId must match the CAIP-2 reference in networkId.");

@@ -59,6 +59,11 @@ function readFirstEnv(names, fallback = "") {
 
 function readIntegerEnv(name, fallback) {
   const value = readOptionalEnv(name);
+
+  if (value === "") {
+    return fallback;
+  }
+
   const parsed = Number(value);
   return Number.isInteger(parsed) ? parsed : fallback;
 }
@@ -256,7 +261,7 @@ function collectMissingConfig(network, input) {
     }
 
     if (!resolveCustomEip712Name(network)) {
-      missing.push(network.eip712EnvNames.join(" or "));
+      missing.push((network.eip712EnvNames ?? ["X402_EVM_EIP712_NAME"]).join(" or "));
     }
   }
 

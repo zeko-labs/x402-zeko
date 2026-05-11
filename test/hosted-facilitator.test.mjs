@@ -93,6 +93,7 @@ test("builds Base, Ethereum, and custom EVM USDC rails and intents", () => {
   });
   const customIntent = buildCustomEvmExactEip3009Intent({
     networkId: "eip155:4217",
+    chainId: "4217",
     chainName: "Tempo",
     tokenAddress: "0x20c000000000000000000000b9537d11c60e8b50",
     assetSymbol: "USDC.e",
