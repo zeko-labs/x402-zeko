@@ -240,6 +240,182 @@ test("self-hosted facilitator enforces and settles exact Base protocol-fee split
   assert.equal(transferCalls[1][4], "495000");
 });
 
+test("self-hosted facilitator allocates pending relayer nonces across fee-split settlement legs", async () => {
+  const calls = [];
+  const mock = createMockClients();
+  mock.publicClient = {
+    ...mock.publicClient,
+    getTransactionCount: async ({ address, blockTag }) => {
+      calls.push(["getTransactionCount", address, blockTag]);
+      return 17;
+    }
+  };
+  mock.walletClient = {
+    writeContract: async ({ functionName, nonce }) => {
+      calls.push(["writeContract", functionName, nonce]);
+      return nonce === 17 ? "0xfeetxhash" : "0xsellertxhash";
+    }
+  };
+  const buyerAddress = privateKeyToAccount(BUYER_PRIVATE_KEY).address;
+  const rail = buildBaseMainnetUsdcRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    protocolFeePayTo: "0x000000000000000000000000000000000000face",
+    feeBps: 100,
+    amount: "0.50"
+  });
+  const intent = buildBaseUsdcExactEip3009Intent({
+    from: buyerAddress,
+    to: rail.payTo,
+    amount: "0.495",
+    nonce: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  });
+  const feeIntent = buildBaseUsdcExactEip3009Intent({
+    from: buyerAddress,
+    to: "0x000000000000000000000000000000000000face",
+    amount: "0.005",
+    nonce: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  });
+  const { requirements, payload } = await buildSignedPayment({ rail, intent, feeIntent });
+  const facilitator = new SelfHostedEvmFacilitator({
+    networks: [
+      {
+        networkId: "eip155:8453",
+        rpcUrl: "https://base.example",
+        relayerPrivateKey: RELAYER_PRIVATE_KEY,
+        publicClient: mock.publicClient,
+        walletClient: mock.walletClient
+      }
+    ]
+  });
+
+  const settlement = await facilitator.settle({
+    paymentPayload: payload,
+    paymentRequirements: requirements
+  });
+  const writeCalls = calls.filter((entry) => entry[0] === "writeContract");
+
+  assert.equal(settlement.success, true);
+  assert.deepEqual(
+    calls.filter((entry) => entry[0] === "getTransactionCount").map((entry) => entry[2]),
+    ["pending"]
+  );
+  assert.deepEqual(writeCalls.map((entry) => entry[2]), [17, 18]);
+});
+
+test("self-hosted facilitator serializes concurrent settlements for one relayer", async () => {
+  let activeWrites = 0;
+  let maxActiveWrites = 0;
+  const mock = createMockClients();
+  mock.walletClient = {
+    writeContract: async () => {
+      activeWrites += 1;
+      maxActiveWrites = Math.max(maxActiveWrites, activeWrites);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      activeWrites -= 1;
+      return "0xtxhashdemo";
+    }
+  };
+  const buyerAddress = privateKeyToAccount(BUYER_PRIVATE_KEY).address;
+  const rail = buildBaseMainnetUsdcRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    amount: "0.50"
+  });
+  const firstIntent = buildBaseUsdcExactEip3009Intent({
+    from: buyerAddress,
+    to: rail.payTo,
+    amount: rail.amount,
+    nonce: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  });
+  const secondIntent = buildBaseUsdcExactEip3009Intent({
+    from: buyerAddress,
+    to: rail.payTo,
+    amount: rail.amount,
+    nonce: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  });
+  const first = await buildSignedPayment({
+    rail,
+    intent: firstIntent,
+    paymentId: "pay_self_hosted_concurrent_one"
+  });
+  const second = await buildSignedPayment({
+    rail,
+    intent: secondIntent,
+    paymentId: "pay_self_hosted_concurrent_two"
+  });
+  const facilitator = new SelfHostedEvmFacilitator({
+    networks: [
+      {
+        networkId: "eip155:8453",
+        rpcUrl: "https://base.example",
+        relayerPrivateKey: RELAYER_PRIVATE_KEY,
+        publicClient: mock.publicClient,
+        walletClient: mock.walletClient
+      }
+    ]
+  });
+
+  const [firstSettlement, secondSettlement] = await Promise.all([
+    facilitator.settle({
+      paymentPayload: first.payload,
+      paymentRequirements: first.requirements
+    }),
+    facilitator.settle({
+      paymentPayload: second.payload,
+      paymentRequirements: second.requirements
+    })
+  ]);
+
+  assert.equal(firstSettlement.success, true);
+  assert.equal(secondSettlement.success, true);
+  assert.equal(maxActiveWrites, 1);
+});
+
+test("self-hosted facilitator marks relayer nonce conflicts as recoverable", async () => {
+  const mock = createMockClients();
+  mock.walletClient = {
+    writeContract: async () => {
+      throw new Error("replacement transaction underpriced");
+    }
+  };
+  const rail = buildBaseMainnetUsdcRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    amount: "0.50"
+  });
+  const intent = buildBaseUsdcExactEip3009Intent({
+    from: privateKeyToAccount(BUYER_PRIVATE_KEY).address,
+    to: rail.payTo,
+    amount: rail.amount
+  });
+  const { requirements, payload } = await buildSignedPayment({
+    rail,
+    intent,
+    paymentId: "pay_self_hosted_nonce_conflict"
+  });
+  const facilitator = new SelfHostedEvmFacilitator({
+    networks: [
+      {
+        networkId: "eip155:8453",
+        rpcUrl: "https://base.example",
+        relayerPrivateKey: RELAYER_PRIVATE_KEY,
+        publicClient: mock.publicClient,
+        walletClient: mock.walletClient
+      }
+    ]
+  });
+
+  const settlement = await facilitator.settle({
+    paymentPayload: payload,
+    paymentRequirements: requirements
+  });
+
+  assert.equal(settlement.success, false);
+  assert.equal(settlement.errorCode, "relayer_nonce_conflict");
+  assert.equal(settlement.settlementState, "settlement_pending");
+  assert.equal(settlement.recoverable, true);
+  assert.equal(settlement.retryAfterMs, 2500);
+  assert.match(settlement.errorReason, /replacement transaction underpriced/);
+});
+
 test("self-hosted facilitator resumes partially settled exact fee-split payloads", async () => {
   const calls = [];
   const buyerAddress = privateKeyToAccount(BUYER_PRIVATE_KEY).address;
