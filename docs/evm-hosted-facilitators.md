@@ -26,6 +26,17 @@ The important difference is operational:
 
 Base can use the default CDP facilitator path or the built-in self-hosted relayer path.
 
+## Emerging EVM payout chains
+
+The package also exposes custom EVM EIP-3009 rail builders for candidate payout chains such as Tempo and Arc. Use these only when the chain id, token address, token decimals, EIP-712 domain, and `transferWithAuthorization(...)` support have been verified.
+
+- Generic rail builder: `buildCustomEvmExactEip3009Rail(...)`
+- Generic intent builder: `buildCustomEvmExactEip3009Intent(...)`
+- Tempo smoke shortcut: `pnpm smoke:tempo-flow`
+- Arc Testnet smoke shortcut: `pnpm smoke:arc-testnet-flow`
+
+Tempo currently uses a custom/self-hosted facilitator path. Arc is testnet-only in this repo until official mainnet details are published.
+
 ## Self-hosted relayer
 
 The package now includes a self-hosted EVM facilitator that verifies the signed EIP-3009 payload locally and relays `transferWithAuthorization(...)` to the live USDC contract.

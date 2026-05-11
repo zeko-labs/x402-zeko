@@ -11,6 +11,8 @@ import {
   buildBaseUsdcExactEip3009Intent,
   buildBaseUsdcReserveReleaseFeeIntent,
   buildBaseUsdcReserveReleaseIntent,
+  buildCustomEvmExactEip3009Intent,
+  buildCustomEvmExactEip3009Rail,
   buildEthereumMainnetUsdcReserveReleaseRail,
   buildEthereumMainnetUsdcExactEip3009Intent,
   buildEthereumUsdcReserveReleaseIntent,
@@ -254,6 +256,53 @@ test("self-hosted facilitator supports Ethereum mainnet with the same EIP-3009 f
 
   assert.equal(verification.isValid, true);
   assert.equal(verification.network, "eip155:1");
+});
+
+test("self-hosted facilitator supports custom CAIP-2 EVM exact EIP-3009 rails", async () => {
+  const mock = createMockClients();
+  const target = {
+    networkId: "eip155:4217",
+    chainName: "Tempo",
+    tokenAddress: "0x20c000000000000000000000b9537d11c60e8b50",
+    assetSymbol: "USDC.e",
+    decimals: 6,
+    eip712Name: "Bridged USDC (Stargate)"
+  };
+  const rail = buildCustomEvmExactEip3009Rail({
+    ...target,
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    amount: "0.25"
+  });
+  const intent = buildCustomEvmExactEip3009Intent({
+    ...target,
+    from: privateKeyToAccount(BUYER_PRIVATE_KEY).address,
+    to: rail.payTo,
+    amount: rail.amount
+  });
+  const { requirements, payload } = await buildSignedPayment({
+    rail,
+    intent,
+    paymentId: "pay_self_hosted_custom_evm"
+  });
+  const facilitator = new SelfHostedEvmFacilitator({
+    networks: [
+      {
+        networkId: "eip155:4217",
+        rpcUrl: "https://tempo.example",
+        relayerPrivateKey: RELAYER_PRIVATE_KEY,
+        publicClient: mock.publicClient,
+        walletClient: mock.walletClient
+      }
+    ]
+  });
+
+  const verification = await facilitator.verify({
+    paymentPayload: payload,
+    paymentRequirements: requirements
+  });
+
+  assert.equal(verification.isValid, true);
+  assert.equal(verification.network, "eip155:4217");
 });
 
 test("self-hosted facilitator can reserve Base USDC into a reserve-release escrow contract", async () => {

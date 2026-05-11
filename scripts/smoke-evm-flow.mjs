@@ -9,6 +9,8 @@ import {
   buildBaseMainnetUsdcRail,
   buildBaseUsdcExactEip3009Intent,
   buildCatalog,
+  buildCustomEvmExactEip3009Intent,
+  buildCustomEvmExactEip3009Rail,
   buildEthereumMainnetUsdcExactEip3009Intent,
   buildEthereumMainnetUsdcRail,
   buildPaymentPayload,
@@ -20,9 +22,50 @@ import {
 } from "../src/index.js";
 import { privateKeyToAccount } from "viem/accounts";
 
+const TEMPO_MAINNET_USDC_E = Object.freeze({
+  networkId: "eip155:4217",
+  chainName: "Tempo",
+  assetSymbol: "USDC.e",
+  decimals: 6,
+  tokenAddress: "0x20c000000000000000000000b9537d11c60e8b50",
+  eip712EnvNames: ["X402_TEMPO_EIP712_NAME", "X402_EVM_EIP712_NAME"]
+});
+
+const ARC_TESTNET_USDC = Object.freeze({
+  networkId: "eip155:5042002",
+  chainName: "Arc Testnet",
+  assetSymbol: "USDC",
+  decimals: 6,
+  tokenAddress: "0x3600000000000000000000000000000000000000",
+  eip712EnvNames: ["X402_ARC_EIP712_NAME", "X402_EVM_EIP712_NAME"]
+});
+
 function readOptionalEnv(name, fallback = "") {
   const value = process.env[name];
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
+}
+
+function readFirstEnv(names, fallback = "") {
+  for (const name of names) {
+    const value = readOptionalEnv(name);
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return fallback;
+}
+
+function readIntegerEnv(name, fallback) {
+  const value = readOptionalEnv(name);
+
+  if (value === "") {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : fallback;
 }
 
 function readOptionalEnvList(names) {
@@ -66,6 +109,18 @@ function normalizePrivateKey(value) {
   return value.startsWith("0x") ? value : `0x${value}`;
 }
 
+function resolveCustomEip712Name(network) {
+  return network.eip712EnvNames ? readFirstEnv(network.eip712EnvNames) : "";
+}
+
+function withCustomTarget(network, input) {
+  return {
+    ...network.customTarget,
+    eip712Name: resolveCustomEip712Name(network),
+    ...input
+  };
+}
+
 function resolvePayTo(network) {
   if (network.name === "base") {
     return readOptionalEnv(
@@ -90,6 +145,20 @@ function resolvePayTo(network) {
     );
   }
 
+  if (network.name === "tempo") {
+    return readOptionalEnv(
+      "X402_TEMPO_PAY_TO",
+      readOptionalEnv("X402_EVM_PAY_TO", readOptionalEnv("X402_EVM_TREASURY_ADDRESS"))
+    );
+  }
+
+  if (network.name === "arc-testnet") {
+    return readOptionalEnv(
+      "X402_ARC_PAY_TO",
+      readOptionalEnv("X402_EVM_PAY_TO", readOptionalEnv("X402_EVM_TREASURY_ADDRESS"))
+    );
+  }
+
   return readOptionalEnv("X402_EVM_PAY_TO", readOptionalEnv("X402_EVM_TREASURY_ADDRESS"));
 }
 
@@ -103,6 +172,14 @@ function resolveAmount(network) {
       "X402_ETHEREUM_USDC_AMOUNT",
       readOptionalEnv("X402_EVM_AMOUNT", "0.50")
     );
+  }
+
+  if (network.name === "tempo") {
+    return readOptionalEnv("X402_TEMPO_USDC_AMOUNT", readOptionalEnv("X402_EVM_AMOUNT", "0.50"));
+  }
+
+  if (network.name === "arc-testnet") {
+    return readOptionalEnv("X402_ARC_USDC_AMOUNT", readOptionalEnv("X402_EVM_AMOUNT", "0.50"));
   }
 
   return readOptionalEnv("X402_EVM_AMOUNT", "0.50");
@@ -120,13 +197,33 @@ function resolveSelfHostedConfig(network) {
             "X402_EVM_RPC_URLS",
             "X402_EVM_RPC_URL"
           ])
+        : network.name === "tempo"
+          ? readOptionalEnvList([
+              "X402_TEMPO_RPC_URLS",
+              "X402_TEMPO_RPC_URL",
+              "TEMPO_RPC_URL",
+              "X402_EVM_RPC_URLS",
+              "X402_EVM_RPC_URL"
+            ])
+          : network.name === "arc-testnet"
+            ? readOptionalEnvList([
+                "X402_ARC_RPC_URLS",
+                "X402_ARC_RPC_URL",
+                "ARC_RPC_URL",
+                "X402_EVM_RPC_URLS",
+                "X402_EVM_RPC_URL"
+              ])
         : readOptionalEnvList(["X402_EVM_RPC_URLS", "X402_EVM_RPC_URL"]);
   const relayerPrivateKey = readOptionalEnv(
     network.name === "base"
       ? "X402_BASE_RELAYER_PRIVATE_KEY"
       : network.name === "ethereum"
         ? "X402_ETHEREUM_RELAYER_PRIVATE_KEY"
-        : "X402_EVM_RELAYER_PRIVATE_KEY",
+        : network.name === "tempo"
+          ? "X402_TEMPO_RELAYER_PRIVATE_KEY"
+          : network.name === "arc-testnet"
+            ? "X402_ARC_RELAYER_PRIVATE_KEY"
+            : "X402_EVM_RELAYER_PRIVATE_KEY",
     readOptionalEnv("X402_EVM_RELAYER_PRIVATE_KEY", readOptionalEnv("EVM_RELAYER_PRIVATE_KEY"))
   );
 
@@ -154,6 +251,20 @@ function collectMissingConfig(network, input) {
     missing.push("X402_*_PAY_TO");
   }
 
+  if (network.customTarget) {
+    if (typeof network.customTarget.tokenAddress !== "string" || network.customTarget.tokenAddress.length === 0) {
+      missing.push(network.tokenAddressEnvName ?? "X402_EVM_TOKEN_ADDRESS");
+    }
+
+    if (!Number.isInteger(network.customTarget.decimals) || network.customTarget.decimals < 0) {
+      missing.push(network.decimalsEnvName ?? "X402_EVM_TOKEN_DECIMALS");
+    }
+
+    if (!resolveCustomEip712Name(network)) {
+      missing.push((network.eip712EnvNames ?? ["X402_EVM_EIP712_NAME"]).join(" or "));
+    }
+  }
+
   if (network.defaultFacilitator === "cdp") {
     if (!input.facilitatorUrl && !input.bearerToken && !input.selfHosted?.ready) {
       missing.push(
@@ -165,6 +276,24 @@ function collectMissingConfig(network, input) {
   }
 
   return missing;
+}
+
+function customNetwork(config) {
+  const network = {
+    name: config.name,
+    networkId: config.customTarget.networkId,
+    customTarget: config.customTarget,
+    eip712EnvNames: config.customTarget.eip712EnvNames,
+    tokenAddressEnvName: config.tokenAddressEnvName,
+    decimalsEnvName: config.decimalsEnvName,
+    defaultFacilitator: "custom"
+  };
+
+  return {
+    ...network,
+    railBuilder: (input) => buildCustomEvmExactEip3009Rail(withCustomTarget(network, input)),
+    intentBuilder: (input) => buildCustomEvmExactEip3009Intent(withCustomTarget(network, input))
+  };
 }
 
 function selectNetwork() {
@@ -193,6 +322,43 @@ function selectNetwork() {
       intentBuilder: buildEthereumMainnetUsdcExactEip3009Intent,
       defaultFacilitator: "custom"
     };
+  }
+
+  if (requested === "tempo" || requested === "tempo-mainnet" || requested === "eip155:4217") {
+    return customNetwork({
+      name: "tempo",
+      customTarget: TEMPO_MAINNET_USDC_E
+    });
+  }
+
+  if (requested === "arc-testnet" || requested === "eip155:5042002") {
+    return customNetwork({
+      name: "arc-testnet",
+      customTarget: ARC_TESTNET_USDC
+    });
+  }
+
+  if (requested === "arc" || requested === "arc-mainnet") {
+    throw new Error(
+      "Arc mainnet is not configured in zeko-x402 yet because the official Arc docs currently publish Arc Testnet connection details. " +
+      "Use X402_EVM_NETWORK=eip155:<arc-mainnet-chain-id> with explicit custom token env vars once Arc mainnet details are published."
+    );
+  }
+
+  if (requested.startsWith("eip155:")) {
+    return customNetwork({
+      name: requested,
+      tokenAddressEnvName: "X402_EVM_TOKEN_ADDRESS",
+      decimalsEnvName: "X402_EVM_TOKEN_DECIMALS",
+      customTarget: {
+        networkId: requested,
+        chainName: readOptionalEnv("X402_EVM_CHAIN_NAME", requested),
+        assetSymbol: readOptionalEnv("X402_EVM_TOKEN_SYMBOL", "USDC"),
+        decimals: readIntegerEnv("X402_EVM_TOKEN_DECIMALS", 6),
+        tokenAddress: readOptionalEnv("X402_EVM_TOKEN_ADDRESS"),
+        eip712EnvNames: ["X402_EVM_EIP712_NAME"]
+      }
+    });
   }
 
   throw new Error(`Unsupported X402_EVM_NETWORK: ${requested}`);
