@@ -1249,6 +1249,14 @@ function settlementSuccessPayload(input) {
   };
 }
 
+function canTreatUsedAuthorizationAsSettled(payment, usage) {
+  return Boolean(
+    !payment.reserveRelease &&
+      usage?.authorizationUsed &&
+      (!payment.exactFeeSplit || usage?.feeAuthorizationUsed)
+  );
+}
+
 async function settleHostedPayment(clients, input) {
   const payment = normalizeHostedExactPayment(input);
   const signatures = await verifyHostedPaymentSignatures(payment);
@@ -1295,10 +1303,7 @@ async function settleHostedPayment(clients, input) {
     balance: initialUsage.balance
   });
 
-  if (
-    initialUsage.authorizationUsed &&
-    (!payment.exactFeeSplit || initialUsage.feeAuthorizationUsed)
-  ) {
+  if (canTreatUsedAuthorizationAsSettled(payment, initialUsage)) {
     return {
       ...settlementSuccessPayload({
         clients,
@@ -1465,7 +1470,7 @@ async function settleHostedPayment(clients, input) {
       payment.exactFeeSplit
         ? await readAuthorizationState(clients, payment, payment.feeAuthorization).catch(() => false)
         : false;
-    if (authorizationUsed && (!payment.exactFeeSplit || feeAuthorizationUsed)) {
+    if (canTreatUsedAuthorizationAsSettled(payment, { authorizationUsed, feeAuthorizationUsed })) {
       return {
         ...settlementSuccessPayload({
           clients,

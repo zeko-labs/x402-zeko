@@ -610,6 +610,81 @@ test("self-hosted facilitator can reserve Base USDC into a reserve-release escro
   );
 });
 
+test("self-hosted facilitator does not treat used reserve-release authorizations as settled without reservation proof", async () => {
+  const buyerAddress = privateKeyToAccount(BUYER_PRIVATE_KEY).address;
+  const nonce = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const calls = [];
+  const mock = {
+    publicClient: {
+      readContract: async ({ functionName, args }) => {
+        calls.push(["readContract", functionName, ...(args ?? [])]);
+
+        if (functionName === "authorizationState") {
+          return String(args[1]).toLowerCase() === nonce.toLowerCase();
+        }
+
+        if (functionName === "balanceOf") {
+          return 900000n;
+        }
+
+        throw new Error(`Unexpected readContract function: ${functionName}`);
+      }
+    },
+    walletClient: {
+      writeContract: async ({ functionName }) => {
+        calls.push(["writeContract", functionName]);
+        throw new Error("EIP-3009 authorization nonce was already used.");
+      }
+    }
+  };
+  const rail = buildBaseMainnetUsdcReserveReleaseRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    amount: "0.50",
+    escrowContract: "0x9999999999999999999999999999999999999999"
+  });
+  const intent = buildBaseUsdcReserveReleaseIntent({
+    from: buyerAddress,
+    payTo: rail.payTo,
+    escrowContract: "0x9999999999999999999999999999999999999999",
+    requestId: "req_self_hosted_reserve_used_nonce",
+    paymentId: "pay_self_hosted_reserve_used_nonce",
+    amount: rail.amount,
+    nonce,
+    resultDigest: "proof_result_digest_used_nonce"
+  });
+  const { requirements, payload } = await buildSignedPayment({
+    rail,
+    intent,
+    paymentId: "pay_self_hosted_reserve_used_nonce"
+  });
+  const facilitator = new SelfHostedEvmFacilitator({
+    networks: [
+      {
+        networkId: "eip155:8453",
+        rpcUrl: "https://base.example",
+        relayerPrivateKey: RELAYER_PRIVATE_KEY,
+        publicClient: mock.publicClient,
+        walletClient: mock.walletClient
+      }
+    ]
+  });
+
+  const settlement = await facilitator.settle({
+    paymentPayload: payload,
+    paymentRequirements: requirements
+  });
+
+  assert.equal(settlement.success, false);
+  assert.equal(settlement.errorCode, "authorization_used");
+  assert.equal(settlement.duplicate, undefined);
+  assert.notEqual(settlement.settlementState, "already_settled");
+  assert.equal(settlement.verification.authorizationUsed, true);
+  assert.equal(
+    calls.some((entry) => entry[0] === "writeContract" && entry[1] === "reserveExactWithAuthorization"),
+    true
+  );
+});
+
 test("self-hosted facilitator can reserve Ethereum USDC into a reserve-release escrow contract", async () => {
   const mock = createMockClients();
   const rail = buildEthereumMainnetUsdcReserveReleaseRail({
