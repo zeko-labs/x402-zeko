@@ -220,6 +220,161 @@ test("self-hosted facilitator enforces and settles exact Base protocol-fee split
   assert.equal(transferCalls[1][4], "495000");
 });
 
+test("self-hosted facilitator resumes partially settled exact fee-split payloads", async () => {
+  const calls = [];
+  const buyerAddress = privateKeyToAccount(BUYER_PRIVATE_KEY).address;
+  const sellerNonce = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const feeNonce = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const usedNonces = new Set([feeNonce.toLowerCase()]);
+  const mock = {
+    publicClient: {
+      readContract: async ({ functionName, args }) => {
+        calls.push(["readContract", functionName, ...(args ?? [])]);
+
+        if (functionName === "authorizationState") {
+          return usedNonces.has(String(args[1]).toLowerCase());
+        }
+
+        if (functionName === "balanceOf") {
+          return 900000n;
+        }
+
+        throw new Error(`Unexpected readContract function: ${functionName}`);
+      },
+      waitForTransactionReceipt: async ({ hash }) => {
+        calls.push(["waitForTransactionReceipt", hash]);
+        return {
+          status: "success",
+          blockHash: "0xblockhashdemo",
+          blockNumber: 123n
+        };
+      }
+    },
+    walletClient: {
+      writeContract: async ({ functionName, args }) => {
+        calls.push(["writeContract", functionName, args[0], args[1], args[2].toString(), args[5]]);
+        usedNonces.add(String(args[5]).toLowerCase());
+        return "0xsellertxhash";
+      }
+    }
+  };
+  const rail = buildBaseMainnetUsdcRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    protocolFeePayTo: "0x000000000000000000000000000000000000face",
+    feeBps: 100,
+    amount: "0.50"
+  });
+  const intent = buildBaseUsdcExactEip3009Intent({
+    from: buyerAddress,
+    to: rail.payTo,
+    amount: "0.495",
+    nonce: sellerNonce
+  });
+  const feeIntent = buildBaseUsdcExactEip3009Intent({
+    from: buyerAddress,
+    to: "0x000000000000000000000000000000000000face",
+    amount: "0.005",
+    nonce: feeNonce
+  });
+  const { requirements, payload } = await buildSignedPayment({ rail, intent, feeIntent });
+  const facilitator = new SelfHostedEvmFacilitator({
+    networks: [
+      {
+        networkId: "eip155:8453",
+        rpcUrl: "https://base.example",
+        relayerPrivateKey: RELAYER_PRIVATE_KEY,
+        publicClient: mock.publicClient,
+        walletClient: mock.walletClient
+      }
+    ]
+  });
+
+  const settlement = await facilitator.settle({
+    paymentPayload: payload,
+    paymentRequirements: requirements
+  });
+  const transferCalls = calls.filter(
+    (entry) => entry[0] === "writeContract" && entry[1] === "transferWithAuthorization"
+  );
+
+  assert.equal(settlement.success, true);
+  assert.equal(settlement.resumed, true);
+  assert.equal(settlement.transactionHash, "0xsellertxhash");
+  assert.equal(transferCalls.length, 1);
+  assert.equal(transferCalls[0][3], "0x000000000000000000000000000000000000bEEF");
+  assert.equal(transferCalls[0][5], sellerNonce);
+});
+
+test("self-hosted facilitator treats fully settled exact fee-split retries as idempotent success", async () => {
+  const calls = [];
+  const buyerAddress = privateKeyToAccount(BUYER_PRIVATE_KEY).address;
+  const sellerNonce = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const feeNonce = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const usedNonces = new Set([sellerNonce.toLowerCase(), feeNonce.toLowerCase()]);
+  const mock = {
+    publicClient: {
+      readContract: async ({ functionName, args }) => {
+        calls.push(["readContract", functionName, ...(args ?? [])]);
+
+        if (functionName === "authorizationState") {
+          return usedNonces.has(String(args[1]).toLowerCase());
+        }
+
+        if (functionName === "balanceOf") {
+          return 900000n;
+        }
+
+        throw new Error(`Unexpected readContract function: ${functionName}`);
+      }
+    },
+    walletClient: {
+      writeContract: async () => {
+        throw new Error("fully settled retry should not broadcast");
+      }
+    }
+  };
+  const rail = buildBaseMainnetUsdcRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    protocolFeePayTo: "0x000000000000000000000000000000000000face",
+    feeBps: 100,
+    amount: "0.50"
+  });
+  const intent = buildBaseUsdcExactEip3009Intent({
+    from: buyerAddress,
+    to: rail.payTo,
+    amount: "0.495",
+    nonce: sellerNonce
+  });
+  const feeIntent = buildBaseUsdcExactEip3009Intent({
+    from: buyerAddress,
+    to: "0x000000000000000000000000000000000000face",
+    amount: "0.005",
+    nonce: feeNonce
+  });
+  const { requirements, payload } = await buildSignedPayment({ rail, intent, feeIntent });
+  const facilitator = new SelfHostedEvmFacilitator({
+    networks: [
+      {
+        networkId: "eip155:8453",
+        rpcUrl: "https://base.example",
+        relayerPrivateKey: RELAYER_PRIVATE_KEY,
+        publicClient: mock.publicClient,
+        walletClient: mock.walletClient
+      }
+    ]
+  });
+
+  const settlement = await facilitator.settle({
+    paymentPayload: payload,
+    paymentRequirements: requirements
+  });
+
+  assert.equal(settlement.success, true);
+  assert.equal(settlement.duplicate, true);
+  assert.equal(settlement.settlementState, "already_settled");
+  assert.equal(calls.some((entry) => entry[0] === "writeContract"), false);
+});
+
 test("self-hosted facilitator supports Ethereum mainnet with the same EIP-3009 flow", async () => {
   const mock = createMockClients();
   const rail = buildEthereumMainnetUsdcRail({
