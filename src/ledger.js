@@ -1,3 +1,5 @@
+import { resolveX402PaymentIdentifier } from "./x402-v2.js";
+
 function trimFraction(value) {
   return value.replace(/\.?0+$/, "");
 }
@@ -69,7 +71,16 @@ export class InMemorySettlementLedger {
   }
 
   settle(input) {
-    const existing = this.inspect(input.paymentId);
+    const settlementKey =
+      typeof input?.idempotencyKey === "string" && input.idempotencyKey.length > 0
+        ? input.idempotencyKey
+        : resolveX402PaymentIdentifier(input);
+
+    if (typeof settlementKey !== "string" || settlementKey.length === 0) {
+      throw new Error("x402 settlement requires paymentId or idempotencyKey.");
+    }
+
+    const existing = this.inspect(settlementKey);
 
     if (existing) {
       if (
@@ -112,6 +123,7 @@ export class InMemorySettlementLedger {
     const turnId = input.turnId ?? `turn_x402_${input.paymentId.slice(-12)}`;
     const settlement = {
       paymentId: input.paymentId,
+      idempotencyKey: settlementKey,
       requestId: input.requestId,
       settlementRail: input.settlementRail,
       amount: input.amount,
@@ -131,7 +143,7 @@ export class InMemorySettlementLedger {
     };
 
     this.sponsoredRemaining = fromAtomicUnits(remaining - amount, this.budgetAsset.decimals);
-    this.settlements.set(input.paymentId, settlement);
+    this.settlements.set(settlementKey, settlement);
 
     return {
       duplicate: false,

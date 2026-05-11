@@ -40,6 +40,11 @@ function buildSignedPayload(input) {
   const authorization = buildSignedEvmAuthorization(input.intent, {
     signature: "0xfeedbeef"
   });
+  const feeAuthorization = input.feeIntent
+    ? buildSignedEvmAuthorization(input.feeIntent, {
+        signature: "0xfeedface"
+      })
+    : undefined;
   const payload = buildPaymentPayload({
     requestId: requirements.requestId,
     paymentId: input.paymentId ?? "pay_demo",
@@ -49,7 +54,8 @@ function buildSignedPayload(input) {
     turnId: "turn_demo",
     issuedAtIso: "2026-04-24T12:00:00.000Z",
     expiresAtIso: "2099-01-01T00:00:00.000Z",
-    authorization
+    authorization,
+    ...(feeAuthorization ? { feeAuthorization } : {})
   });
 
   return {
@@ -116,6 +122,47 @@ test("maps internal Base x402 payloads into hosted facilitator request shape", (
     "0x1111111111111111111111111111111111111111"
   );
   assert.equal(request.paymentPayload.resource.url, requirements.resource);
+});
+
+test("maps exact Base fee-split payloads into hosted facilitator request shape", () => {
+  const rail = buildBaseMainnetUsdcRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    protocolFeePayTo: "0x000000000000000000000000000000000000FaCe",
+    feeBps: 100,
+    amount: "0.50"
+  });
+  const intent = buildBaseUsdcExactEip3009Intent({
+    from: "0x1111111111111111111111111111111111111111",
+    to: "0x000000000000000000000000000000000000bEEF",
+    amount: "0.495",
+    nonce: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  });
+  const feeIntent = buildBaseUsdcExactEip3009Intent({
+    from: "0x1111111111111111111111111111111111111111",
+    to: "0x000000000000000000000000000000000000FaCe",
+    amount: "0.005",
+    nonce: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  });
+  const { requirements, payload } = buildSignedPayload({
+    rail,
+    intent,
+    feeIntent,
+    payer: "0x1111111111111111111111111111111111111111"
+  });
+  const request = buildHostedFacilitatorRequest({
+    paymentRequirements: requirements,
+    paymentPayload: payload
+  });
+
+  assert.equal(request.paymentPayload.accepted.extra.settlementModel, "x402-exact-evm-fee-split-v1");
+  assert.equal(request.paymentPayload.accepted.extra.feeSplit.grossAmount, "500000");
+  assert.equal(request.paymentPayload.accepted.extra.feeSplit.sellerAmount, "495000");
+  assert.equal(request.paymentPayload.accepted.extra.feeSplit.protocolFeeAmount, "5000");
+  assert.equal(
+    request.paymentPayload.payload.feeAuthorization.authorization.to,
+    "0x000000000000000000000000000000000000FaCe"
+  );
+  assert.equal(request.paymentPayload.payload.feeAuthorization.authorization.value, "5000");
 });
 
 test("maps reserve-release Base payloads into hosted facilitator request shape with escrow metadata", () => {

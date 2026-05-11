@@ -9,6 +9,7 @@ export * from "./ledger.js";
 export * from "./payments.js";
 export * from "./protocol.js";
 export * from "./settlement-store.js";
+export * from "./x402-v2.js";
 export * from "./zeko-settlement-contract.js";
 export * from "./targets.js";
 export * from "./zeko-client.js";

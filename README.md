@@ -7,6 +7,7 @@ It is the protocol and settlement layer, not the app layer.
 ## What's In This Repo
 
 - Core x402 helpers: `402 Payment Required`, payment headers, rails, payloads, receipts
+- V2 interop helpers: payment-identifier, signed offer/receipt, gas-sponsoring, and official x402 header adapters
 - EVM rails: Ethereum and Base USDC exact settlement plus reserve-release flows
 - Zeko rail: zkApp settlement helpers, witness store/service, and client helpers
 - Self-hosted facilitator: local or hosted `/verify` and `/settle` service for EVM rails

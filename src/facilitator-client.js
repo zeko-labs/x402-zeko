@@ -104,19 +104,19 @@ function findMatchingAcceptedOption(requirements, payload) {
     : null;
 }
 
-function assertExactEvmAuthorization(payload) {
-  const authorization = payload?.authorization;
+function assertExactEvmAuthorization(payload, field = "authorization") {
+  const authorization = payload?.[field];
 
   if (!isRecord(authorization)) {
-    throw new Error("Hosted facilitator integration requires an EVM authorization object.");
+    throw new Error(`Hosted facilitator integration requires an EVM ${field} object.`);
   }
 
   if (!isRecord(authorization.typedData) || !isRecord(authorization.typedData.message)) {
-    throw new Error("Hosted facilitator integration requires EVM typedData.message.");
+    throw new Error(`Hosted facilitator integration requires EVM ${field}.typedData.message.`);
   }
 
   if (typeof authorization.signature !== "string" || authorization.signature.length === 0) {
-    throw new Error("Hosted facilitator integration requires an EVM signature.");
+    throw new Error(`Hosted facilitator integration requires an EVM ${field} signature.`);
   }
 
   return authorization;
@@ -160,8 +160,23 @@ function toHostedExactOption(option) {
       Number.isInteger(feeSplit.feeBps) && feeSplit.feeBps >= 0 && feeSplit.feeBps <= 10_000
         ? feeSplit.feeBps
         : 0;
-    const protocolFeeAmount = (grossAmount * BigInt(feeBps)) / 10_000n;
-    const sellerAmount = grossAmount - protocolFeeAmount;
+    const protocolFeeAmount =
+      typeof feeSplit.protocolFeeAmount === "string" && feeSplit.protocolFeeAmount.length > 0
+        ? BigInt(feeSplit.protocolFeeAmount)
+        : (grossAmount * BigInt(feeBps)) / 10_000n;
+    const sellerAmount =
+      typeof feeSplit.sellerAmount === "string" && feeSplit.sellerAmount.length > 0
+        ? BigInt(feeSplit.sellerAmount)
+        : grossAmount - protocolFeeAmount;
+
+    if (sellerAmount + protocolFeeAmount !== grossAmount) {
+      throw new Error("Hosted facilitator fee split amounts must sum to the exact gross amount.");
+    }
+
+    if (!(typeof feeSplit.protocolFeePayTo === "string" && feeSplit.protocolFeePayTo.length > 0)) {
+      throw new Error("Hosted facilitator fee split requires protocolFeePayTo.");
+    }
+
     extra.feeSplit = {
       version: feeSplit.version ?? "protocol-owner-fee-v1",
       feeBps,
@@ -196,6 +211,11 @@ export function buildHostedFacilitatorRequest(input) {
   }
 
   const authorization = assertExactEvmAuthorization(input.paymentPayload);
+  const exactFeeSplitRequiresAuthorization =
+    isRecord(option?.extensions?.evm?.feeSplit) && !isRecord(option?.extensions?.evm?.reserveRelease);
+  const feeAuthorization = exactFeeSplitRequiresAuthorization
+    ? assertExactEvmAuthorization(input.paymentPayload, "feeAuthorization")
+    : null;
   const accepted = toHostedExactOption(option);
 
   return {
@@ -206,6 +226,17 @@ export function buildHostedFacilitatorRequest(input) {
       payload: {
         signature: authorization.signature,
         authorization: authorization.typedData.message,
+        ...(feeAuthorization
+          ? {
+              feeAuthorization: {
+                signature: feeAuthorization.signature,
+                authorization: feeAuthorization.typedData.message,
+                ...(typeof feeAuthorization.primitive === "string"
+                  ? { primitive: feeAuthorization.primitive }
+                  : {})
+              }
+            }
+          : {}),
         ...(isRecord(authorization.settlement) ? { settlement: authorization.settlement } : {}),
         ...(typeof authorization.primitive === "string" ? { primitive: authorization.primitive } : {})
       },
