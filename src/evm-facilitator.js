@@ -166,6 +166,20 @@ function isTransientRpcError(error) {
   );
 }
 
+function isRelayerNonceConflictError(error) {
+  const message = transientRpcMessage(error);
+  return (
+    message.includes("nonce too low") ||
+    message.includes("tx nonce") ||
+    message.includes("replacement transaction underpriced") ||
+    message.includes("transaction underpriced") ||
+    message.includes("already known") ||
+    message.includes("known transaction") ||
+    message.includes("fee too low") ||
+    message.includes("max fee per gas less than block base fee")
+  );
+}
+
 async function retryTransientRpc(clients, label, fn) {
   let lastError;
 
@@ -185,6 +199,61 @@ async function retryTransientRpc(clients, label, fn) {
   }
 
   throw lastError ?? new Error(`${label} failed.`);
+}
+
+const relayerSettlementQueues = new Map();
+
+function relayerSettlementQueueKey(clients) {
+  return `${clients.networkId}:${clients.account.address.toLowerCase()}`;
+}
+
+async function withRelayerSettlementQueue(clients, fn) {
+  const key = relayerSettlementQueueKey(clients);
+  const previous = relayerSettlementQueues.get(key) ?? Promise.resolve();
+  const current = previous.catch(() => {}).then(fn);
+  const stored = current.catch(() => {});
+  relayerSettlementQueues.set(key, stored);
+
+  try {
+    return await current;
+  } finally {
+    if (relayerSettlementQueues.get(key) === stored) {
+      relayerSettlementQueues.delete(key);
+    }
+  }
+}
+
+function createRelayerTransactionManager(clients) {
+  let nextNonce = null;
+
+  async function allocateNonceParams() {
+    if (typeof clients.publicClient.getTransactionCount !== "function") {
+      return {};
+    }
+
+    if (nextNonce === null) {
+      const pendingNonce = await retryTransientRpc(clients, "getTransactionCount", async () => {
+        return await clients.publicClient.getTransactionCount({
+          address: clients.account.address,
+          blockTag: "pending"
+        });
+      });
+      nextNonce = Number(pendingNonce);
+    }
+
+    const nonce = nextNonce;
+    nextNonce += 1;
+    return Number.isFinite(nonce) ? { nonce } : {};
+  }
+
+  return {
+    async writeContract(params) {
+      return await clients.walletClient.writeContract({
+        ...params,
+        ...(await allocateNonceParams())
+      });
+    }
+  };
 }
 
 function transferWithAuthorizationTypes() {
@@ -1322,88 +1391,110 @@ async function settleHostedPayment(clients, input) {
   const { v, r, s } = parseSignature(payment.signature);
   const feeSignature = payment.exactFeeSplit ? parseSignature(payment.feeSignature) : null;
 
-  try {
-    let feeTransactionHash = null;
-    let feeReceipt = null;
-    const transactionHash = payment.reserveRelease
-      ? await clients.walletClient.writeContract({
-          account: clients.account,
-          chain: clients.chain,
-          address: payment.reserveRelease.contractAddress,
-          abi: X402_RESERVE_RELEASE_ESCROW_ABI,
-          functionName: payment.reserveRelease.reserveMethod,
-          args: payment.reserveRelease.feeSplit
-            ? [
-                payment.reserveRelease.requestIdHash,
-                payment.reserveRelease.paymentIdHash,
-                payment.authorization.from,
-                payment.reserveRelease.feeSplit.sellerPayTo,
-                payment.reserveRelease.feeSplit.protocolFeePayTo,
-                payment.tokenAddress,
-                payment.reserveRelease.feeSplit.grossAmount,
-                payment.reserveRelease.feeSplit.sellerAmount,
-                payment.reserveRelease.feeSplit.protocolFeeAmount,
-                payment.reserveRelease.feeSplit.feeBps,
-                payment.authorization.validAfter,
-                payment.authorization.validBefore,
-                payment.authorization.nonce,
-                payment.reserveRelease.resultCommitment,
-                payment.reserveRelease.reserveExpiryUnix,
-                v,
-                r,
-                s
-              ]
-            : [
-                payment.reserveRelease.requestIdHash,
-                payment.reserveRelease.paymentIdHash,
-                payment.authorization.from,
-                payment.payTo,
-                payment.tokenAddress,
-                payment.authorization.value,
-                payment.authorization.validAfter,
-                payment.authorization.validBefore,
-                payment.authorization.nonce,
-                payment.reserveRelease.resultCommitment,
-                payment.reserveRelease.reserveExpiryUnix,
-                v,
-                r,
-                s
-            ]
-        })
-      : payment.exactFeeSplit
-        ? await (async () => {
-            if (!initialUsage.feeAuthorizationUsed) {
-              feeTransactionHash = await clients.walletClient.writeContract({
+  return await withRelayerSettlementQueue(clients, async () => {
+    const transactionManager = createRelayerTransactionManager(clients);
+
+    try {
+      let feeTransactionHash = null;
+      let feeReceipt = null;
+      const transactionHash = payment.reserveRelease
+        ? await transactionManager.writeContract({
+            account: clients.account,
+            chain: clients.chain,
+            address: payment.reserveRelease.contractAddress,
+            abi: X402_RESERVE_RELEASE_ESCROW_ABI,
+            functionName: payment.reserveRelease.reserveMethod,
+            args: payment.reserveRelease.feeSplit
+              ? [
+                  payment.reserveRelease.requestIdHash,
+                  payment.reserveRelease.paymentIdHash,
+                  payment.authorization.from,
+                  payment.reserveRelease.feeSplit.sellerPayTo,
+                  payment.reserveRelease.feeSplit.protocolFeePayTo,
+                  payment.tokenAddress,
+                  payment.reserveRelease.feeSplit.grossAmount,
+                  payment.reserveRelease.feeSplit.sellerAmount,
+                  payment.reserveRelease.feeSplit.protocolFeeAmount,
+                  payment.reserveRelease.feeSplit.feeBps,
+                  payment.authorization.validAfter,
+                  payment.authorization.validBefore,
+                  payment.authorization.nonce,
+                  payment.reserveRelease.resultCommitment,
+                  payment.reserveRelease.reserveExpiryUnix,
+                  v,
+                  r,
+                  s
+                ]
+              : [
+                  payment.reserveRelease.requestIdHash,
+                  payment.reserveRelease.paymentIdHash,
+                  payment.authorization.from,
+                  payment.payTo,
+                  payment.tokenAddress,
+                  payment.authorization.value,
+                  payment.authorization.validAfter,
+                  payment.authorization.validBefore,
+                  payment.authorization.nonce,
+                  payment.reserveRelease.resultCommitment,
+                  payment.reserveRelease.reserveExpiryUnix,
+                  v,
+                  r,
+                  s
+                ]
+          })
+        : payment.exactFeeSplit
+          ? await (async () => {
+              if (!initialUsage.feeAuthorizationUsed) {
+                feeTransactionHash = await transactionManager.writeContract({
+                  account: clients.account,
+                  chain: clients.chain,
+                  address: payment.tokenAddress,
+                  abi: USDC_EIP3009_ABI,
+                  functionName: "transferWithAuthorization",
+                  args: [
+                    payment.feeAuthorization.from,
+                    payment.feeAuthorization.to,
+                    payment.feeAuthorization.value,
+                    payment.feeAuthorization.validAfter,
+                    payment.feeAuthorization.validBefore,
+                    payment.feeAuthorization.nonce,
+                    feeSignature.v,
+                    feeSignature.r,
+                    feeSignature.s
+                  ]
+                });
+
+                if (typeof clients.publicClient.waitForTransactionReceipt === "function") {
+                  feeReceipt = await retryTransientRpc(clients, "waitForTransactionReceipt", async () => {
+                    return await clients.publicClient.waitForTransactionReceipt({ hash: feeTransactionHash });
+                  });
+                }
+              }
+
+              if (initialUsage.authorizationUsed) {
+                return null;
+              }
+
+              return await transactionManager.writeContract({
                 account: clients.account,
                 chain: clients.chain,
                 address: payment.tokenAddress,
                 abi: USDC_EIP3009_ABI,
                 functionName: "transferWithAuthorization",
                 args: [
-                  payment.feeAuthorization.from,
-                  payment.feeAuthorization.to,
-                  payment.feeAuthorization.value,
-                  payment.feeAuthorization.validAfter,
-                  payment.feeAuthorization.validBefore,
-                  payment.feeAuthorization.nonce,
-                  feeSignature.v,
-                  feeSignature.r,
-                  feeSignature.s
+                  payment.authorization.from,
+                  payment.authorization.to,
+                  payment.authorization.value,
+                  payment.authorization.validAfter,
+                  payment.authorization.validBefore,
+                  payment.authorization.nonce,
+                  v,
+                  r,
+                  s
                 ]
               });
-
-              if (typeof clients.publicClient.waitForTransactionReceipt === "function") {
-                feeReceipt = await retryTransientRpc(clients, "waitForTransactionReceipt", async () => {
-                  return await clients.publicClient.waitForTransactionReceipt({ hash: feeTransactionHash });
-                });
-              }
-            }
-
-            if (initialUsage.authorizationUsed) {
-              return null;
-            }
-
-            return await clients.walletClient.writeContract({
+            })()
+          : await transactionManager.writeContract({
               account: clients.account,
               chain: clients.chain,
               address: payment.tokenAddress,
@@ -1421,31 +1512,12 @@ async function settleHostedPayment(clients, input) {
                 s
               ]
             });
-          })()
-      : await clients.walletClient.writeContract({
-          account: clients.account,
-          chain: clients.chain,
-          address: payment.tokenAddress,
-          abi: USDC_EIP3009_ABI,
-          functionName: "transferWithAuthorization",
-          args: [
-            payment.authorization.from,
-            payment.authorization.to,
-            payment.authorization.value,
-            payment.authorization.validAfter,
-            payment.authorization.validBefore,
-            payment.authorization.nonce,
-            v,
-            r,
-            s
-          ]
-        });
-    const receipt =
-      transactionHash && typeof clients.publicClient.waitForTransactionReceipt === "function"
-        ? await retryTransientRpc(clients, "waitForTransactionReceipt", async () => {
-            return await clients.publicClient.waitForTransactionReceipt({ hash: transactionHash });
-          })
-        : null;
+      const receipt =
+        transactionHash && typeof clients.publicClient.waitForTransactionReceipt === "function"
+          ? await retryTransientRpc(clients, "waitForTransactionReceipt", async () => {
+              return await clients.publicClient.waitForTransactionReceipt({ hash: transactionHash });
+            })
+          : null;
 
       return {
         ...settlementSuccessPayload({
@@ -1464,59 +1536,69 @@ async function settleHostedPayment(clients, input) {
           : {}),
         verification
       };
-  } catch (error) {
-    const authorizationUsed = await readAuthorizationState(clients, payment).catch(() => false);
-    const feeAuthorizationUsed =
-      payment.exactFeeSplit
-        ? await readAuthorizationState(clients, payment, payment.feeAuthorization).catch(() => false)
-        : false;
-    if (canTreatUsedAuthorizationAsSettled(payment, { authorizationUsed, feeAuthorizationUsed })) {
+    } catch (error) {
+      const authorizationUsed = await readAuthorizationState(clients, payment).catch(() => false);
+      const feeAuthorizationUsed =
+        payment.exactFeeSplit
+          ? await readAuthorizationState(clients, payment, payment.feeAuthorization).catch(() => false)
+          : false;
+      if (canTreatUsedAuthorizationAsSettled(payment, { authorizationUsed, feeAuthorizationUsed })) {
+        return {
+          ...settlementSuccessPayload({
+            clients,
+            payment,
+            transactionHash: null,
+            feeTransactionHash: null,
+            receipt: null,
+            feeReceipt: null
+          }),
+          duplicate: true,
+          settlementState: "already_settled_after_error",
+          verification: {
+            ...verification,
+            authorizationUsed: true
+          }
+        };
+      }
+      const decodedError = decodeKnownExecutionError(error);
+      const relayerNonceConflict = isRelayerNonceConflictError(error);
+      const errorReason =
+        decodedError?.reason ??
+        (authorizationUsed
+          ? "EIP-3009 authorization nonce was already used."
+          : error instanceof Error
+            ? error.message
+            : String(error));
+
       return {
-        ...settlementSuccessPayload({
-          clients,
-          payment,
-          transactionHash: null,
-          feeTransactionHash: null,
-          receipt: null,
-          feeReceipt: null
-        }),
-        duplicate: true,
-        settlementState: "already_settled_after_error",
+        success: false,
+        errorReason,
+        ...(decodedError
+          ? {
+              errorCode: decodedError.errorCode,
+              errorName: decodedError.errorName,
+              errorArgs: decodedError.errorArgs,
+              revertData: decodedError.revertData
+            }
+          : relayerNonceConflict
+            ? {
+                errorCode: "relayer_nonce_conflict",
+                settlementState: "settlement_pending",
+                recoverable: true,
+                retryAfterMs: 2500,
+                relayer: clients.account.address
+              }
+            : authorizationUsed
+              ? { errorCode: "authorization_used" }
+              : { errorCode: "settlement_failed" }),
         verification: {
           ...verification,
-          authorizationUsed: true
+          authorizationUsed: Boolean(authorizationUsed || feeAuthorizationUsed),
+          ...(payment.exactFeeSplit ? { feeAuthorizationUsed } : {})
         }
       };
     }
-    const decodedError = decodeKnownExecutionError(error);
-    const errorReason =
-      decodedError?.reason ??
-      (authorizationUsed
-        ? "EIP-3009 authorization nonce was already used."
-        : error instanceof Error
-          ? error.message
-          : String(error));
-
-    return {
-      success: false,
-      errorReason,
-      ...(decodedError
-        ? {
-            errorCode: decodedError.errorCode,
-            errorName: decodedError.errorName,
-            errorArgs: decodedError.errorArgs,
-            revertData: decodedError.revertData
-          }
-        : authorizationUsed
-          ? { errorCode: "authorization_used" }
-          : { errorCode: "settlement_failed" }),
-      verification: {
-        ...verification,
-        authorizationUsed: Boolean(authorizationUsed || feeAuthorizationUsed),
-        ...(payment.exactFeeSplit ? { feeAuthorizationUsed } : {})
-      }
-    };
-  }
+  });
 }
 
 function readJsonBody(request) {
