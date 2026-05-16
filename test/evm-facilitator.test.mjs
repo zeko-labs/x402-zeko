@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   SelfHostedEvmFacilitator,
   X402_RESERVE_RELEASE_ESCROW_ABI,
+  RelayerSettlementLockError,
   buildBaseMainnetUsdcRail,
   buildBaseMainnetUsdcReserveReleaseFeeRail,
   buildBaseMainnetUsdcReserveReleaseRail,
@@ -368,6 +369,119 @@ test("self-hosted facilitator serializes concurrent settlements for one relayer"
   assert.equal(firstSettlement.success, true);
   assert.equal(secondSettlement.success, true);
   assert.equal(maxActiveWrites, 1);
+});
+
+test("self-hosted facilitator can wrap settlement with an external relayer lock", async () => {
+  const events = [];
+  const mock = createMockClients();
+  mock.walletClient = {
+    writeContract: async () => {
+      events.push("write");
+      return "0xtxhashdemo";
+    }
+  };
+  const relayerAddress = privateKeyToAccount(RELAYER_PRIVATE_KEY).address;
+  const relayerSettlementLock = {
+    info: { type: "test-lock" },
+    acquire: async (key, context) => {
+      events.push("acquire");
+      assert.equal(key, `eip155:8453:${relayerAddress.toLowerCase()}`);
+      assert.equal(context.networkId, "eip155:8453");
+      assert.equal(context.relayer, relayerAddress);
+      return async () => {
+        events.push("release");
+      };
+    }
+  };
+  const rail = buildBaseMainnetUsdcRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    amount: "0.50"
+  });
+  const intent = buildBaseUsdcExactEip3009Intent({
+    from: privateKeyToAccount(BUYER_PRIVATE_KEY).address,
+    to: rail.payTo,
+    amount: rail.amount
+  });
+  const { requirements, payload } = await buildSignedPayment({
+    rail,
+    intent,
+    paymentId: "pay_self_hosted_external_lock"
+  });
+  const facilitator = new SelfHostedEvmFacilitator({
+    relayerSettlementLock,
+    networks: [
+      {
+        networkId: "eip155:8453",
+        rpcUrl: "https://base.example",
+        relayerPrivateKey: RELAYER_PRIVATE_KEY,
+        publicClient: mock.publicClient,
+        walletClient: mock.walletClient
+      }
+    ]
+  });
+
+  const settlement = await facilitator.settle({
+    paymentPayload: payload,
+    paymentRequirements: requirements
+  });
+  const supported = await facilitator.supported();
+
+  assert.equal(settlement.success, true);
+  assert.deepEqual(events, ["acquire", "write", "release"]);
+  assert.equal(supported.networks[0].relayerSettlementCoordination.type, "test-lock");
+});
+
+test("self-hosted facilitator marks external relayer lock failures as recoverable", async () => {
+  const mock = createMockClients();
+  mock.walletClient = {
+    writeContract: async () => {
+      throw new Error("writeContract should not be called when the relayer lock is unavailable");
+    }
+  };
+  const relayerSettlementLock = {
+    info: { type: "test-lock" },
+    acquire: async () => {
+      throw new RelayerSettlementLockError("relayer lock busy", { retryAfterMs: 333 });
+    }
+  };
+  const rail = buildBaseMainnetUsdcRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    amount: "0.50"
+  });
+  const intent = buildBaseUsdcExactEip3009Intent({
+    from: privateKeyToAccount(BUYER_PRIVATE_KEY).address,
+    to: rail.payTo,
+    amount: rail.amount
+  });
+  const { requirements, payload } = await buildSignedPayment({
+    rail,
+    intent,
+    paymentId: "pay_self_hosted_external_lock_busy"
+  });
+  const facilitator = new SelfHostedEvmFacilitator({
+    relayerSettlementLock,
+    networks: [
+      {
+        networkId: "eip155:8453",
+        rpcUrl: "https://base.example",
+        relayerPrivateKey: RELAYER_PRIVATE_KEY,
+        publicClient: mock.publicClient,
+        walletClient: mock.walletClient
+      }
+    ]
+  });
+
+  const settlement = await facilitator.settle({
+    paymentPayload: payload,
+    paymentRequirements: requirements
+  });
+
+  assert.equal(settlement.success, false);
+  assert.equal(settlement.errorCode, "relayer_lock_unavailable");
+  assert.equal(settlement.settlementState, "settlement_pending");
+  assert.equal(settlement.recoverable, true);
+  assert.equal(settlement.retryAfterMs, 333);
+  assert.match(settlement.errorReason, /relayer lock busy/);
 });
 
 test("self-hosted facilitator marks relayer nonce conflicts as recoverable", async () => {
@@ -1146,6 +1260,8 @@ test("self-hosted facilitator HTTP server exposes supported, verify, and settle 
 
     const baseUrl = `http://127.0.0.1:${address.port}`;
     const supported = await fetch(`${baseUrl}/supported`).then((response) => response.json());
+    const docs = await fetch(`${baseUrl}/docs`).then((response) => response.json());
+    const openapi = await fetch(`${baseUrl}/openapi.json`).then((response) => response.json());
     const verification = await fetch(`${baseUrl}/verify`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1162,11 +1278,22 @@ test("self-hosted facilitator HTTP server exposes supported, verify, and settle 
         paymentRequirements: requirements
       })
     }).then((response) => response.json());
+    const invalidVerification = await fetch(`${baseUrl}/verify`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ paymentPayload: requirements, paymentRequirements: requirements })
+    });
+    const invalidVerificationBody = await invalidVerification.json();
 
     assert.equal(supported.ok, true);
     assert.equal(supported.networks[0].networkId, "eip155:8453");
+    assert.equal(docs.service, "zeko-x402-evm-facilitator");
+    assert.equal(openapi.openapi, "3.1.0");
     assert.equal(verification.isValid, true);
     assert.equal(settlement.success, true);
+    assert.equal(invalidVerification.status, 400);
+    assert.equal(invalidVerificationBody.errorCode, "invalid_request");
+    assert.match(invalidVerificationBody.error, /paymentPayload\.accepted\.asset|networkId|settlementRail/);
   } finally {
     server.close();
   }

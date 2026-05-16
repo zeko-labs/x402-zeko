@@ -1,4 +1,7 @@
-import { createSelfHostedEvmFacilitatorHttpServer } from "../src/index.js";
+import {
+  createHttpRelayerSettlementLock,
+  createSelfHostedEvmFacilitatorHttpServer
+} from "../src/index.js";
 
 const SHARED_PUBLIC_RPC_HOSTS = new Set([
   "mainnet.base.org",
@@ -315,6 +318,23 @@ function buildNetworkConfigs() {
   ];
 }
 
+function buildRelayerSettlementLock() {
+  const url = readOptionalEnv("X402_EVM_RELAYER_LOCK_URL");
+
+  if (!url) {
+    return null;
+  }
+
+  return createHttpRelayerSettlementLock({
+    url,
+    bearerToken: readOptionalEnv("X402_EVM_RELAYER_LOCK_BEARER_TOKEN"),
+    ttlMs: readPositiveIntEnv("X402_EVM_RELAYER_LOCK_TTL_MS", 600_000),
+    acquireTimeoutMs: readPositiveIntEnv("X402_EVM_RELAYER_LOCK_ACQUIRE_TIMEOUT_MS", 15_000),
+    retryDelayMs: readPositiveIntEnv("X402_EVM_RELAYER_LOCK_RETRY_DELAY_MS", 250),
+    requestTimeoutMs: readPositiveIntEnv("X402_EVM_RELAYER_LOCK_REQUEST_TIMEOUT_MS", 5_000)
+  });
+}
+
 async function main() {
   const host = readOptionalEnv("X402_EVM_FACILITATOR_HOST", "127.0.0.1");
   const port = Number(readOptionalEnv("X402_EVM_FACILITATOR_PORT", readOptionalEnv("PORT", "7422")));
@@ -324,8 +344,9 @@ async function main() {
   }
 
   const networks = buildNetworkConfigs();
+  const relayerSettlementLock = buildRelayerSettlementLock();
   assertHostedRpcPolicy(networks, { host });
-  const server = createSelfHostedEvmFacilitatorHttpServer({ networks });
+  const server = createSelfHostedEvmFacilitatorHttpServer({ networks, relayerSettlementLock });
 
   await new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -339,6 +360,7 @@ async function main() {
         host,
         port,
         baseUrl: `http://${host}:${port}`,
+        relayerSettlementCoordination: relayerSettlementLock?.info ?? { type: "in_process" },
         networks: networks.map((network) => ({
           networkId: network.networkId,
           rpcEnvNames: network.rpcEnvNames ?? [],
