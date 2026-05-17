@@ -239,6 +239,40 @@ test("verifies and settles either Zeko-native or EVM payments", () => {
   assert.equal(typeof settlementResponse.receiptDigest.sha256Hex, "string");
 });
 
+test("settles atomic EVM amounts against decimal sponsored budgets", () => {
+  const asset = {
+    symbol: "USDC",
+    decimals: 6,
+    standard: "erc20",
+    address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+  };
+  const ledger = new InMemorySettlementLedger({
+    budgetAsset: asset,
+    sponsoredBudget: "10"
+  });
+  const settlement = ledger.settle({
+    paymentId: "pay_atomic_budget_001",
+    requestId: "req_atomic_budget_001",
+    settlementRail: "evm",
+    amount: "250000",
+    asset,
+    payer: "0x2222222222222222222222222222222222222222",
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    sessionId: "session_atomic_budget",
+    turnId: "turn_atomic_budget",
+    resource: "https://relay.santaclawz.ai/api/agents/agent/hire",
+    networkId: "eip155:8453",
+    extensions: {
+      evm: {
+        amountUnit: "atomic"
+      }
+    }
+  });
+
+  assert.equal(settlement.duplicate, false);
+  assert.equal(settlement.remainingBudget, "9.75");
+});
+
 test("builds concrete settlement intents for the chosen Zeko and Base targets", () => {
   const zekoIntent = buildZekoExactSettlementIntent({
     contractAddress: "B62qcontract11111111111111111111111111111111111111111111111111111",
