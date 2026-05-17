@@ -140,6 +140,10 @@ function parseRetryAfterMs(response, body, fallback) {
   return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : fallback;
 }
 
+function defaultRelayerLockRenewIntervalMs(ttlMs) {
+  return Math.max(1_000, Math.min(60_000, Math.floor(ttlMs / 3)));
+}
+
 async function postRelayerLockJson(config, path, body) {
   if (typeof fetch !== "function") {
     throw new RelayerSettlementLockError(
@@ -187,15 +191,79 @@ async function postRelayerLockJson(config, path, body) {
   }
 }
 
+async function renewHttpRelayerSettlementLock(config, key, lockId, context) {
+  const { response, json } = await postRelayerLockJson(config, "renew", {
+    key,
+    lockId,
+    owner: config.owner,
+    ttlMs: config.ttlMs,
+    context
+  });
+  const renewed =
+    response.ok &&
+    (
+      json?.renewed === true ||
+      json?.ok === true ||
+      json?.acquired === true ||
+      json?.lockId === lockId ||
+      json?.id === lockId
+    );
+
+  if (renewed) {
+    return;
+  }
+
+  if (response.status === 401 || response.status === 403) {
+    throw new RelayerSettlementLockError("Relayer settlement lock service rejected lock renewal.", {
+      errorCode: "relayer_lock_rejected",
+      recoverable: false
+    });
+  }
+
+  throw new RelayerSettlementLockError("Relayer settlement lock renewal failed.", {
+    retryAfterMs: parseRetryAfterMs(response, json, config.retryDelayMs)
+  });
+}
+
+function startHttpRelayerSettlementLockRenewal(config, key, lockId, context) {
+  if (config.renewIntervalMs <= 0) {
+    return async () => {};
+  }
+
+  let stopped = false;
+  let renewal = Promise.resolve();
+  const timer = setInterval(() => {
+    renewal = renewal
+      .catch(() => {})
+      .then(async () => {
+        if (!stopped) {
+          await renewHttpRelayerSettlementLock(config, key, lockId, context);
+        }
+      });
+  }, config.renewIntervalMs);
+  timer.unref?.();
+
+  return async () => {
+    stopped = true;
+    clearInterval(timer);
+    await renewal.catch(() => {});
+  };
+}
+
 export function createHttpRelayerSettlementLock(input = {}) {
   const url = assertNonEmptyString("url", input.url);
+  const ttlMs = parsePositiveInteger(input.ttlMs, 600_000);
   const config = {
     url,
     bearerToken: typeof input.bearerToken === "string" && input.bearerToken.length > 0
       ? input.bearerToken
       : "",
     owner: input.owner ?? `${hostname()}:${process.pid}:${randomUUID()}`,
-    ttlMs: parsePositiveInteger(input.ttlMs, 600_000),
+    ttlMs,
+    renewIntervalMs: parseNonNegativeInteger(
+      input.renewIntervalMs,
+      defaultRelayerLockRenewIntervalMs(ttlMs)
+    ),
     acquireTimeoutMs: parsePositiveInteger(input.acquireTimeoutMs, 15_000),
     retryDelayMs: parsePositiveInteger(input.retryDelayMs, 250),
     requestTimeoutMs: parsePositiveInteger(input.requestTimeoutMs, 5_000)
@@ -206,6 +274,8 @@ export function createHttpRelayerSettlementLock(input = {}) {
       type: "http",
       url: redactRpcUrl(url),
       ttlMs: config.ttlMs,
+      renewIntervalMs: config.renewIntervalMs,
+      renewal: config.renewIntervalMs > 0 ? "enabled" : "disabled",
       acquireTimeoutMs: config.acquireTimeoutMs,
       retryDelayMs: config.retryDelayMs,
       requestTimeoutMs: config.requestTimeoutMs
@@ -234,14 +304,19 @@ export function createHttpRelayerSettlementLock(input = {}) {
 
         if (acquired) {
           const lockId = json.lockId ?? json.id ?? key;
+          const stopRenewal = startHttpRelayerSettlementLockRenewal(config, key, lockId, context);
 
           return async () => {
-            await postRelayerLockJson(config, "release", {
-              key,
-              lockId,
-              owner: config.owner,
-              context
-            });
+            try {
+              await stopRenewal();
+            } finally {
+              await postRelayerLockJson(config, "release", {
+                key,
+                lockId,
+                owner: config.owner,
+                context
+              });
+            }
           };
         }
 

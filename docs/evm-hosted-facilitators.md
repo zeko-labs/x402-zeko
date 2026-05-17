@@ -108,15 +108,21 @@ If a hosted deployment runs multiple replicas that all share one relayer wallet,
 X402_EVM_RELAYER_LOCK_URL=https://your-lock-service.example/x402-relayer-lock
 X402_EVM_RELAYER_LOCK_BEARER_TOKEN=replace_with_lock_service_token
 X402_EVM_RELAYER_LOCK_TTL_MS=600000
+X402_EVM_RELAYER_LOCK_RENEW_INTERVAL_MS=60000
 X402_EVM_RELAYER_LOCK_ACQUIRE_TIMEOUT_MS=15000
 ```
 
-The lock service only needs two JSON endpoints:
+Hosted startup requires `X402_EVM_RELAYER_LOCK_BEARER_TOKEN` when `X402_EVM_RELAYER_LOCK_URL` is configured. Keep the lock service private and authenticated; an unauthenticated shared-relayer lock can be abused as a denial-of-service lever. For a private local experiment only, `X402_EVM_ALLOW_UNAUTHENTICATED_RELAYER_LOCK=true` bypasses this startup guard.
+
+The lock service needs three JSON endpoints:
 
 - `POST /acquire` with `{ key, owner, ttlMs, context }`, returning `{ acquired: true, lockId }` when the lock is held.
+- `POST /renew` with `{ key, owner, lockId, ttlMs, context }`, atomically extending the same owner/lock lease and returning `{ renewed: true, lockId }`.
 - `POST /release` with `{ key, owner, lockId, context }`, releasing the lock or letting the TTL expire if the caller crashes.
 
-The lock key is `networkId:relayerAddress`. Use one replica per relayer, different relayer wallets per replica, or this external lock. Do not run multiple replicas against the same relayer wallet without one of those protections.
+The lock key is `networkId:relayerAddress`. The backend must make acquire/renew/release atomic, for example with Redis `SET NX PX` plus token-checked renew/release, or a database lock with an expiry column and owner token. Use one replica per relayer, different relayer wallets per replica, or this external lock. Do not run multiple replicas against the same relayer wallet without one of those protections.
+
+Set `X402_EVM_RELAYER_LOCK_TTL_MS` above the worst-case settlement plus receipt wait time for the slowest enabled chain. The facilitator renews the lease every `X402_EVM_RELAYER_LOCK_RENEW_INTERVAL_MS` while a settlement is in progress; set the interval lower than the TTL, typically around one-third of the TTL.
 
 Ethereum example:
 

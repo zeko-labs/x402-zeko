@@ -21,6 +21,7 @@ import {
   buildPaymentPayload,
   buildPaymentRequired,
   buildSignedEvmAuthorization,
+  createHttpRelayerSettlementLock,
   createSelfHostedEvmFacilitatorHttpServer,
   facilitatorVersionInfo
 } from "../src/index.js";
@@ -429,6 +430,93 @@ test("self-hosted facilitator can wrap settlement with an external relayer lock"
   assert.equal(settlement.success, true);
   assert.deepEqual(events, ["acquire", "write", "release"]);
   assert.equal(supported.networks[0].relayerSettlementCoordination.type, "test-lock");
+});
+
+test("self-hosted facilitator renews HTTP relayer locks during long settlements", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const parsedUrl = new URL(url);
+    const body = JSON.parse(options.body ?? "{}");
+    calls.push({
+      path: parsedUrl.pathname,
+      authorization: options.headers?.authorization,
+      body
+    });
+
+    if (parsedUrl.pathname.endsWith("/acquire")) {
+      return new Response(JSON.stringify({ acquired: true, lockId: "lock_http_demo" }), { status: 200 });
+    }
+
+    if (parsedUrl.pathname.endsWith("/renew")) {
+      return new Response(JSON.stringify({ renewed: true, lockId: "lock_http_demo" }), { status: 200 });
+    }
+
+    if (parsedUrl.pathname.endsWith("/release")) {
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }
+
+    return new Response(JSON.stringify({ error: "not_found" }), { status: 404 });
+  };
+
+  try {
+    const mock = createMockClients();
+    mock.walletClient = {
+      writeContract: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return "0xtxhashdemo";
+      }
+    };
+    const relayerSettlementLock = createHttpRelayerSettlementLock({
+      url: "https://lock.example/x402-relayer-lock",
+      bearerToken: "secret_lock_token",
+      ttlMs: 60,
+      renewIntervalMs: 5,
+      requestTimeoutMs: 1000
+    });
+    const rail = buildBaseMainnetUsdcRail({
+      payTo: "0x000000000000000000000000000000000000bEEF",
+      amount: "0.50"
+    });
+    const intent = buildBaseUsdcExactEip3009Intent({
+      from: privateKeyToAccount(BUYER_PRIVATE_KEY).address,
+      to: rail.payTo,
+      amount: rail.amount
+    });
+    const { requirements, payload } = await buildSignedPayment({
+      rail,
+      intent,
+      paymentId: "pay_self_hosted_http_lock_renewal"
+    });
+    const facilitator = new SelfHostedEvmFacilitator({
+      relayerSettlementLock,
+      networks: [
+        {
+          networkId: "eip155:8453",
+          rpcUrl: "https://base.example",
+          relayerPrivateKey: RELAYER_PRIVATE_KEY,
+          publicClient: mock.publicClient,
+          walletClient: mock.walletClient
+        }
+      ]
+    });
+
+    const settlement = await facilitator.settle({
+      paymentPayload: payload,
+      paymentRequirements: requirements
+    });
+    const paths = calls.map((entry) => entry.path);
+    const renewCalls = calls.filter((entry) => entry.path.endsWith("/renew"));
+
+    assert.equal(settlement.success, true);
+    assert.ok(paths.includes("/x402-relayer-lock/acquire"));
+    assert.ok(paths.includes("/x402-relayer-lock/release"));
+    assert.ok(renewCalls.length >= 1);
+    assert.ok(calls.every((entry) => entry.authorization === "Bearer secret_lock_token"));
+    assert.ok(renewCalls.every((entry) => entry.body.ttlMs === 60));
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
 });
 
 test("self-hosted facilitator marks external relayer lock failures as recoverable", async () => {

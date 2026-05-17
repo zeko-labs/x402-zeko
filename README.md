@@ -46,7 +46,7 @@ The facilitator retries transient read-side RPC failures and receipt polling, bu
 
 The hosted facilitator exposes `GET /docs` and `GET /openapi.json` for the expected `/verify` and `/settle` request shape. Malformed facilitator requests now return HTTP 400 with `errorCode: "invalid_request"` instead of an opaque 500; operational failures still return 500/503.
 
-For hosted scaling, the facilitator serializes settlements in-process by default. That is safe for one service instance per relayer wallet, or for multiple instances using different relayer wallets. If multiple hosted replicas share the same relayer wallet, set `X402_EVM_RELAYER_LOCK_URL` so all replicas acquire the same external relayer lock before allocating a pending nonce or broadcasting.
+For hosted scaling, the facilitator serializes settlements in-process by default. That is safe for one service instance per relayer wallet, or for multiple instances using different relayer wallets. If multiple hosted replicas share the same relayer wallet, set `X402_EVM_RELAYER_LOCK_URL` and `X402_EVM_RELAYER_LOCK_BEARER_TOKEN` so all replicas acquire and renew the same external relayer lock before allocating a pending nonce or broadcasting.
 
 ### 2. Run smokes
 
@@ -80,7 +80,7 @@ pnpm doctor:rails
 - Use separate relayer and `payTo` wallets in real deployments.
 - App-specific onboarding, auth, tenant signup, and workflow gating should live in a separate app or adapter repo.
 - For hosted multi-tenant setups, each tenant should bring its own `payTo`, relayer, and optionally dedicated escrow.
-- For hosted multi-replica setups sharing one relayer wallet, configure an external relayer lock; otherwise use one instance per relayer.
+- For hosted multi-replica setups sharing one relayer wallet, configure an authenticated external relayer lock with acquire/renew/release; otherwise use one instance per relayer.
 - Reserve-release flows exist for proof-gated payments. Exact settlement is still the simplest path.
 
 ## Main Commands

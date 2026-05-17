@@ -65,7 +65,13 @@ function readPositiveIntEnv(name, fallback) {
 }
 
 function readNonNegativeIntEnv(name, fallback) {
-  const parsed = Number(readOptionalEnv(name));
+  const value = readOptionalEnv(name);
+
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number(value);
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
@@ -318,17 +324,33 @@ function buildNetworkConfigs() {
   ];
 }
 
-function buildRelayerSettlementLock() {
+function assertHostedRelayerLockPolicy({ host, url, bearerToken }) {
+  if (!url || !isHostedRuntime(host) || bearerToken || envFlagEnabled("X402_EVM_ALLOW_UNAUTHENTICATED_RELAYER_LOCK")) {
+    return;
+  }
+
+  throw new Error(
+    "Hosted EVM facilitator requires X402_EVM_RELAYER_LOCK_BEARER_TOKEN when X402_EVM_RELAYER_LOCK_URL is configured. " +
+      "The lock service gates a shared relayer wallet and must be private/authenticated. " +
+      "For a private local experiment only, set X402_EVM_ALLOW_UNAUTHENTICATED_RELAYER_LOCK=true."
+  );
+}
+
+function buildRelayerSettlementLock({ host }) {
   const url = readOptionalEnv("X402_EVM_RELAYER_LOCK_URL");
 
   if (!url) {
     return null;
   }
 
+  const bearerToken = readOptionalEnv("X402_EVM_RELAYER_LOCK_BEARER_TOKEN");
+  assertHostedRelayerLockPolicy({ host, url, bearerToken });
+
   return createHttpRelayerSettlementLock({
     url,
-    bearerToken: readOptionalEnv("X402_EVM_RELAYER_LOCK_BEARER_TOKEN"),
+    bearerToken,
     ttlMs: readPositiveIntEnv("X402_EVM_RELAYER_LOCK_TTL_MS", 600_000),
+    renewIntervalMs: readNonNegativeIntEnv("X402_EVM_RELAYER_LOCK_RENEW_INTERVAL_MS", undefined),
     acquireTimeoutMs: readPositiveIntEnv("X402_EVM_RELAYER_LOCK_ACQUIRE_TIMEOUT_MS", 15_000),
     retryDelayMs: readPositiveIntEnv("X402_EVM_RELAYER_LOCK_RETRY_DELAY_MS", 250),
     requestTimeoutMs: readPositiveIntEnv("X402_EVM_RELAYER_LOCK_REQUEST_TIMEOUT_MS", 5_000)
@@ -344,7 +366,7 @@ async function main() {
   }
 
   const networks = buildNetworkConfigs();
-  const relayerSettlementLock = buildRelayerSettlementLock();
+  const relayerSettlementLock = buildRelayerSettlementLock({ host });
   assertHostedRpcPolicy(networks, { host });
   const server = createSelfHostedEvmFacilitatorHttpServer({ networks, relayerSettlementLock });
 
