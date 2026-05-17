@@ -122,6 +122,33 @@ function assertExactEvmAuthorization(payload, field = "authorization") {
   return authorization;
 }
 
+function evmAmountUnit(option) {
+  const evm = option?.extensions?.evm;
+  const santaclawz = option?.extensions?.santaclawz;
+
+  if (evm?.amountUnit === "atomic" || santaclawz?.amountUnit === "atomic") {
+    return "atomic";
+  }
+
+  if (evm?.amountUnit === "decimal" || santaclawz?.amountUnit === "decimal") {
+    return "decimal";
+  }
+
+  return "decimal";
+}
+
+function resolveHostedAtomicAmount(option, amount) {
+  if (evmAmountUnit(option) === "atomic") {
+    if (!/^\d+$/.test(amount)) {
+      throw new Error("Hosted facilitator atomic EVM amounts must be base-10 integer strings.");
+    }
+
+    return BigInt(amount);
+  }
+
+  return toAtomicUnits(amount, option.asset.decimals);
+}
+
 function toHostedExactOption(option) {
   const amount = option?.amount ?? option?.price;
 
@@ -132,6 +159,8 @@ function toHostedExactOption(option) {
   if (typeof option?.asset?.address !== "string" || option.asset.address.length === 0) {
     throw new Error("Hosted facilitator integration requires an ERC-20 token address.");
   }
+
+  const atomicAmount = resolveHostedAtomicAmount(option, amount);
 
   const extra = {
     name: option?.extensions?.evm?.eip712Name ?? option.asset.symbol,
@@ -155,7 +184,7 @@ function toHostedExactOption(option) {
   }
 
   if (isRecord(feeSplit)) {
-    const grossAmount = toAtomicUnits(amount, option.asset.decimals);
+    const grossAmount = atomicAmount;
     const feeBps =
       Number.isInteger(feeSplit.feeBps) && feeSplit.feeBps >= 0 && feeSplit.feeBps <= 10_000
         ? feeSplit.feeBps
@@ -196,7 +225,7 @@ function toHostedExactOption(option) {
     scheme: option.scheme,
     network: option.network,
     asset: option.asset.address,
-    amount: toAtomicUnits(amount, option.asset.decimals).toString(),
+    amount: atomicAmount.toString(),
     payTo: option.payTo,
     maxTimeoutSeconds: option?.extensions?.evm?.maxTimeoutSeconds ?? 60,
     extra
