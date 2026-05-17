@@ -62,6 +62,68 @@ X402_BASE_RPC_URLS=https://your-private-base-rpc,https://mainnet.base.org
 
 Read-only RPC calls and receipt polling use conservative built-in retry/backoff for transient failures such as `429`, rate limits, timeouts, and `502/503/504` responses. Writes are not blindly retried after broadcast because an ambiguous `eth_sendRawTransaction` response may already have submitted the transaction.
 
+## HTTP API shape
+
+Hosted facilitators expose:
+
+- `GET /health` and `GET /version` for version metadata.
+- `GET /supported` for network and redacted RPC configuration.
+- `GET /docs` for a human-readable route and payload summary.
+- `GET /openapi.json` for a machine-readable OpenAPI document.
+- `POST /verify` for signed EVM x402 payment verification.
+- `POST /settle` for signed EVM x402 payment settlement.
+
+Both `/verify` and `/settle` expect:
+
+```json
+{
+  "paymentPayload": {
+    "protocol": "x402",
+    "networkId": "eip155:8453",
+    "settlementRail": "evm",
+    "payTo": "0x...",
+    "accepted": {
+      "asset": "0x...",
+      "amount": "250000"
+    },
+    "payload": {
+      "authorization": "EIP-3009 typed-data authorization envelope"
+    }
+  },
+  "paymentRequirements": {
+    "accepts": []
+  }
+}
+```
+
+Do not post the advertised payment requirements object as `paymentPayload`. Validation errors return HTTP 400 with `errorCode: "invalid_request"` and a specific message such as `paymentPayload.accepted.asset is required.`
+
+## Relayer scaling
+
+The self-hosted facilitator keeps the single-instance path simple: settlements are serialized in-process per `{ networkId, relayer }`, then the facilitator fetches the pending nonce and broadcasts. That is enough for one service instance per relayer wallet.
+
+If a hosted deployment runs multiple replicas that all share one relayer wallet, configure an external relayer lock. The existing in-process queue stays in place, but each settlement also acquires the external lock before pending nonce allocation and transaction broadcast.
+
+```bash
+X402_EVM_RELAYER_LOCK_URL=https://your-lock-service.example/x402-relayer-lock
+X402_EVM_RELAYER_LOCK_BEARER_TOKEN=replace_with_lock_service_token
+X402_EVM_RELAYER_LOCK_TTL_MS=600000
+X402_EVM_RELAYER_LOCK_RENEW_INTERVAL_MS=60000
+X402_EVM_RELAYER_LOCK_ACQUIRE_TIMEOUT_MS=15000
+```
+
+Hosted startup requires `X402_EVM_RELAYER_LOCK_BEARER_TOKEN` when `X402_EVM_RELAYER_LOCK_URL` is configured. Keep the lock service private and authenticated; an unauthenticated shared-relayer lock can be abused as a denial-of-service lever. For a private local experiment only, `X402_EVM_ALLOW_UNAUTHENTICATED_RELAYER_LOCK=true` bypasses this startup guard.
+
+The lock service needs three JSON endpoints:
+
+- `POST /acquire` with `{ key, owner, ttlMs, context }`, returning `{ acquired: true, lockId }` when the lock is held.
+- `POST /renew` with `{ key, owner, lockId, ttlMs, context }`, atomically extending the same owner/lock lease and returning `{ renewed: true, lockId }`.
+- `POST /release` with `{ key, owner, lockId, context }`, releasing the lock or letting the TTL expire if the caller crashes.
+
+The lock key is `networkId:relayerAddress`. The backend must make acquire/renew/release atomic, for example with Redis `SET NX PX` plus token-checked renew/release, or a database lock with an expiry column and owner token. Use one replica per relayer, different relayer wallets per replica, or this external lock. Do not run multiple replicas against the same relayer wallet without one of those protections.
+
+Set `X402_EVM_RELAYER_LOCK_TTL_MS` above the worst-case settlement plus receipt wait time for the slowest enabled chain. The facilitator renews the lease every `X402_EVM_RELAYER_LOCK_RENEW_INTERVAL_MS` while a settlement is in progress; set the interval lower than the TTL, typically around one-third of the TTL.
+
 Ethereum example:
 
 ```bash

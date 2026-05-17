@@ -1,4 +1,6 @@
 import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
+import { hostname } from "node:os";
 
 import {
   createPublicClient,
@@ -42,6 +44,36 @@ function parsePositiveInteger(value, fallback) {
 
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export class RelayerSettlementLockError extends Error {
+  constructor(message, options = {}) {
+    super(message, options.cause ? { cause: options.cause } : undefined);
+    this.name = "RelayerSettlementLockError";
+    this.errorCode = options.errorCode ?? "relayer_lock_unavailable";
+    this.recoverable = options.recoverable ?? true;
+    this.retryAfterMs = options.retryAfterMs;
+  }
+}
+
+function isRelayerSettlementLockError(error) {
+  return error instanceof RelayerSettlementLockError || error?.name === "RelayerSettlementLockError";
+}
+
+function relayerSettlementLockInfo(lock) {
+  if (!lock) {
+    return { type: "in_process" };
+  }
+
+  if (typeof lock.info === "function") {
+    return lock.info();
+  }
+
+  if (isRecord(lock.info)) {
+    return lock.info;
+  }
+
+  return { type: "external" };
 }
 
 function normalizePrivateKey(value) {
@@ -90,6 +122,230 @@ function redactRpcUrl(value) {
   } catch {
     return "<redacted-rpc-url>";
   }
+}
+
+function appendHttpLockPath(baseUrl, path) {
+  const url = new URL(baseUrl);
+  url.pathname = `${url.pathname.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
+  return url.toString();
+}
+
+function parseRetryAfterMs(response, body, fallback) {
+  if (body && Number.isFinite(Number(body.retryAfterMs))) {
+    return Math.max(0, Number(body.retryAfterMs));
+  }
+
+  const retryAfter = response.headers?.get?.("retry-after");
+  const seconds = Number(retryAfter);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : fallback;
+}
+
+function defaultRelayerLockRenewIntervalMs(ttlMs) {
+  return Math.max(1_000, Math.min(60_000, Math.floor(ttlMs / 3)));
+}
+
+async function postRelayerLockJson(config, path, body) {
+  if (typeof fetch !== "function") {
+    throw new RelayerSettlementLockError(
+      "HTTP relayer settlement locks require a Node.js runtime with global fetch.",
+      { recoverable: false }
+    );
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs);
+
+  try {
+    const response = await fetch(appendHttpLockPath(config.url, path), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(config.bearerToken ? { authorization: `Bearer ${config.bearerToken}` } : {})
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+    const text = await response.text();
+    const json = text
+      ? (() => {
+          try {
+            return JSON.parse(text);
+          } catch {
+            return { raw: text };
+          }
+        })()
+      : {};
+
+    return { response, json };
+  } catch (error) {
+    if (isRelayerSettlementLockError(error)) {
+      throw error;
+    }
+
+    throw new RelayerSettlementLockError("Relayer settlement lock service request failed.", {
+      cause: error,
+      retryAfterMs: config.retryDelayMs
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function renewHttpRelayerSettlementLock(config, key, lockId, context) {
+  const { response, json } = await postRelayerLockJson(config, "renew", {
+    key,
+    lockId,
+    owner: config.owner,
+    ttlMs: config.ttlMs,
+    context
+  });
+  const renewed =
+    response.ok &&
+    (
+      json?.renewed === true ||
+      json?.ok === true ||
+      json?.acquired === true ||
+      json?.lockId === lockId ||
+      json?.id === lockId
+    );
+
+  if (renewed) {
+    return;
+  }
+
+  if (response.status === 401 || response.status === 403) {
+    throw new RelayerSettlementLockError("Relayer settlement lock service rejected lock renewal.", {
+      errorCode: "relayer_lock_rejected",
+      recoverable: false
+    });
+  }
+
+  throw new RelayerSettlementLockError("Relayer settlement lock renewal failed.", {
+    retryAfterMs: parseRetryAfterMs(response, json, config.retryDelayMs)
+  });
+}
+
+function startHttpRelayerSettlementLockRenewal(config, key, lockId, context) {
+  if (config.renewIntervalMs <= 0) {
+    return async () => {};
+  }
+
+  let stopped = false;
+  let renewal = Promise.resolve();
+  const timer = setInterval(() => {
+    renewal = renewal
+      .catch(() => {})
+      .then(async () => {
+        if (!stopped) {
+          await renewHttpRelayerSettlementLock(config, key, lockId, context);
+        }
+      });
+  }, config.renewIntervalMs);
+  timer.unref?.();
+
+  return async () => {
+    stopped = true;
+    clearInterval(timer);
+    await renewal.catch(() => {});
+  };
+}
+
+export function createHttpRelayerSettlementLock(input = {}) {
+  const url = assertNonEmptyString("url", input.url);
+  const ttlMs = parsePositiveInteger(input.ttlMs, 600_000);
+  const config = {
+    url,
+    bearerToken: typeof input.bearerToken === "string" && input.bearerToken.length > 0
+      ? input.bearerToken
+      : "",
+    owner: input.owner ?? `${hostname()}:${process.pid}:${randomUUID()}`,
+    ttlMs,
+    renewIntervalMs: parseNonNegativeInteger(
+      input.renewIntervalMs,
+      defaultRelayerLockRenewIntervalMs(ttlMs)
+    ),
+    acquireTimeoutMs: parsePositiveInteger(input.acquireTimeoutMs, 15_000),
+    retryDelayMs: parsePositiveInteger(input.retryDelayMs, 250),
+    requestTimeoutMs: parsePositiveInteger(input.requestTimeoutMs, 5_000)
+  };
+
+  return {
+    info: {
+      type: "http",
+      url: redactRpcUrl(url),
+      ttlMs: config.ttlMs,
+      renewIntervalMs: config.renewIntervalMs,
+      renewal: config.renewIntervalMs > 0 ? "enabled" : "disabled",
+      acquireTimeoutMs: config.acquireTimeoutMs,
+      retryDelayMs: config.retryDelayMs,
+      requestTimeoutMs: config.requestTimeoutMs
+    },
+    async acquire(key, context = {}) {
+      const deadline = Date.now() + config.acquireTimeoutMs;
+      let lastError;
+
+      while (Date.now() <= deadline) {
+        const body = {
+          key,
+          owner: config.owner,
+          ttlMs: config.ttlMs,
+          context
+        };
+        const { response, json } = await postRelayerLockJson(config, "acquire", body);
+        const retryAfterMs = parseRetryAfterMs(response, json, config.retryDelayMs);
+        const acquired =
+          response.ok &&
+          (
+            json?.acquired === true ||
+            json?.ok === true ||
+            typeof json?.lockId === "string" ||
+            typeof json?.id === "string"
+          );
+
+        if (acquired) {
+          const lockId = json.lockId ?? json.id ?? key;
+          const stopRenewal = startHttpRelayerSettlementLockRenewal(config, key, lockId, context);
+
+          return async () => {
+            try {
+              await stopRenewal();
+            } finally {
+              await postRelayerLockJson(config, "release", {
+                key,
+                lockId,
+                owner: config.owner,
+                context
+              });
+            }
+          };
+        }
+
+        if (response.status === 401 || response.status === 403) {
+          throw new RelayerSettlementLockError("Relayer settlement lock service rejected the request.", {
+            errorCode: "relayer_lock_rejected",
+            recoverable: false
+          });
+        }
+
+        if (response.status >= 400 && response.status < 500 && ![409, 423, 425, 429].includes(response.status)) {
+          throw new RelayerSettlementLockError("Relayer settlement lock service rejected the lock payload.", {
+            errorCode: "relayer_lock_rejected",
+            recoverable: false
+          });
+        }
+
+        lastError = new RelayerSettlementLockError("Relayer settlement lock is currently held.", {
+          retryAfterMs
+        });
+        await wait(Math.min(retryAfterMs, Math.max(0, deadline - Date.now())));
+      }
+
+      throw new RelayerSettlementLockError("Timed out acquiring relayer settlement lock.", {
+        cause: lastError,
+        retryAfterMs: config.retryDelayMs
+      });
+    }
+  };
 }
 
 function parseChainId(networkId) {
@@ -207,10 +463,73 @@ function relayerSettlementQueueKey(clients) {
   return `${clients.networkId}:${clients.account.address.toLowerCase()}`;
 }
 
+function relayerSettlementLockContext(clients, key) {
+  return {
+    key,
+    networkId: clients.networkId,
+    relayer: clients.account.address
+  };
+}
+
+async function releaseRelayerSettlementLock(release) {
+  try {
+    if (typeof release === "function") {
+      await release();
+      return;
+    }
+
+    if (release && typeof release.release === "function") {
+      await release.release();
+    }
+  } catch {
+    // The lock has a TTL; do not turn a completed settlement into a failed one.
+  }
+}
+
+async function withRelayerSettlementLock(clients, key, fn) {
+  const lock = clients.relayerSettlementLock;
+
+  if (!lock) {
+    return await fn();
+  }
+
+  const context = relayerSettlementLockContext(clients, key);
+
+  if (typeof lock.acquire === "function") {
+    let release;
+
+    try {
+      release = await lock.acquire(key, context);
+    } catch (error) {
+      if (isRelayerSettlementLockError(error)) {
+        throw error;
+      }
+
+      throw new RelayerSettlementLockError("Relayer settlement lock acquire failed.", {
+        cause: error
+      });
+    }
+
+    try {
+      return await fn();
+    } finally {
+      await releaseRelayerSettlementLock(release);
+    }
+  }
+
+  if (typeof lock.withLock === "function") {
+    return await lock.withLock(key, context, fn);
+  }
+
+  throw new RelayerSettlementLockError("Relayer settlement lock must expose acquire() or withLock().", {
+    recoverable: false
+  });
+}
+
 async function withRelayerSettlementQueue(clients, fn) {
   const key = relayerSettlementQueueKey(clients);
   const previous = relayerSettlementQueues.get(key) ?? Promise.resolve();
-  const current = previous.catch(() => {}).then(fn);
+  const current = previous.catch(() => {}).then(() => withRelayerSettlementLock(clients, key, fn));
   const stored = current.catch(() => {});
   relayerSettlementQueues.set(key, stored);
 
@@ -1066,6 +1385,7 @@ function makeClients(config) {
     rpcRetryDelayMs,
     rpcTimeoutMs,
     account,
+    relayerSettlementLock: config?.relayerSettlementLock ?? null,
     publicClient,
     walletClient
   };
@@ -1391,14 +1711,15 @@ async function settleHostedPayment(clients, input) {
   const { v, r, s } = parseSignature(payment.signature);
   const feeSignature = payment.exactFeeSplit ? parseSignature(payment.feeSignature) : null;
 
-  return await withRelayerSettlementQueue(clients, async () => {
-    const transactionManager = createRelayerTransactionManager(clients);
+  try {
+    return await withRelayerSettlementQueue(clients, async () => {
+      const transactionManager = createRelayerTransactionManager(clients);
 
-    try {
-      let feeTransactionHash = null;
-      let feeReceipt = null;
-      const transactionHash = payment.reserveRelease
-        ? await transactionManager.writeContract({
+      try {
+        let feeTransactionHash = null;
+        let feeReceipt = null;
+        const transactionHash = payment.reserveRelease
+          ? await transactionManager.writeContract({
             account: clients.account,
             chain: clients.chain,
             address: payment.reserveRelease.contractAddress,
@@ -1441,11 +1762,11 @@ async function settleHostedPayment(clients, input) {
                   r,
                   s
                 ]
-          })
-        : payment.exactFeeSplit
-          ? await (async () => {
-              if (!initialUsage.feeAuthorizationUsed) {
-                feeTransactionHash = await transactionManager.writeContract({
+            })
+          : payment.exactFeeSplit
+            ? await (async () => {
+                if (!initialUsage.feeAuthorizationUsed) {
+                  feeTransactionHash = await transactionManager.writeContract({
                   account: clients.account,
                   chain: clients.chain,
                   address: payment.tokenAddress,
@@ -1462,20 +1783,39 @@ async function settleHostedPayment(clients, input) {
                     feeSignature.r,
                     feeSignature.s
                   ]
-                });
-
-                if (typeof clients.publicClient.waitForTransactionReceipt === "function") {
-                  feeReceipt = await retryTransientRpc(clients, "waitForTransactionReceipt", async () => {
-                    return await clients.publicClient.waitForTransactionReceipt({ hash: feeTransactionHash });
                   });
+
+                  if (typeof clients.publicClient.waitForTransactionReceipt === "function") {
+                    feeReceipt = await retryTransientRpc(clients, "waitForTransactionReceipt", async () => {
+                      return await clients.publicClient.waitForTransactionReceipt({ hash: feeTransactionHash });
+                    });
+                  }
                 }
-              }
 
-              if (initialUsage.authorizationUsed) {
-                return null;
-              }
+                if (initialUsage.authorizationUsed) {
+                  return null;
+                }
 
-              return await transactionManager.writeContract({
+                return await transactionManager.writeContract({
+                  account: clients.account,
+                  chain: clients.chain,
+                  address: payment.tokenAddress,
+                  abi: USDC_EIP3009_ABI,
+                  functionName: "transferWithAuthorization",
+                  args: [
+                    payment.authorization.from,
+                    payment.authorization.to,
+                    payment.authorization.value,
+                    payment.authorization.validAfter,
+                    payment.authorization.validBefore,
+                    payment.authorization.nonce,
+                    v,
+                    r,
+                    s
+                  ]
+                });
+              })()
+            : await transactionManager.writeContract({
                 account: clients.account,
                 chain: clients.chain,
                 address: payment.tokenAddress,
@@ -1493,112 +1833,109 @@ async function settleHostedPayment(clients, input) {
                   s
                 ]
               });
-            })()
-          : await transactionManager.writeContract({
-              account: clients.account,
-              chain: clients.chain,
-              address: payment.tokenAddress,
-              abi: USDC_EIP3009_ABI,
-              functionName: "transferWithAuthorization",
-              args: [
-                payment.authorization.from,
-                payment.authorization.to,
-                payment.authorization.value,
-                payment.authorization.validAfter,
-                payment.authorization.validBefore,
-                payment.authorization.nonce,
-                v,
-                r,
-                s
-              ]
-            });
-      const receipt =
-        transactionHash && typeof clients.publicClient.waitForTransactionReceipt === "function"
-          ? await retryTransientRpc(clients, "waitForTransactionReceipt", async () => {
-              return await clients.publicClient.waitForTransactionReceipt({ hash: transactionHash });
-            })
-          : null;
+        const receipt =
+          transactionHash && typeof clients.publicClient.waitForTransactionReceipt === "function"
+            ? await retryTransientRpc(clients, "waitForTransactionReceipt", async () => {
+                return await clients.publicClient.waitForTransactionReceipt({ hash: transactionHash });
+              })
+            : null;
 
-      return {
-        ...settlementSuccessPayload({
-          clients,
-          payment,
-          transactionHash,
-          feeTransactionHash,
-          receipt,
-          feeReceipt
-        }),
-        ...(initialUsage.authorizationUsed || initialUsage.feeAuthorizationUsed
-          ? {
-              resumed: true,
-              settlementState: "resumed"
-            }
-          : {}),
-        verification
-      };
-    } catch (error) {
-      const authorizationUsed = await readAuthorizationState(clients, payment).catch(() => false);
-      const feeAuthorizationUsed =
-        payment.exactFeeSplit
-          ? await readAuthorizationState(clients, payment, payment.feeAuthorization).catch(() => false)
-          : false;
-      if (canTreatUsedAuthorizationAsSettled(payment, { authorizationUsed, feeAuthorizationUsed })) {
         return {
           ...settlementSuccessPayload({
             clients,
             payment,
-            transactionHash: null,
-            feeTransactionHash: null,
-            receipt: null,
-            feeReceipt: null
+            transactionHash,
+            feeTransactionHash,
+            receipt,
+            feeReceipt
           }),
-          duplicate: true,
-          settlementState: "already_settled_after_error",
+          ...(initialUsage.authorizationUsed || initialUsage.feeAuthorizationUsed
+            ? {
+                resumed: true,
+                settlementState: "resumed"
+              }
+            : {}),
+          verification
+        };
+      } catch (error) {
+        const authorizationUsed = await readAuthorizationState(clients, payment).catch(() => false);
+        const feeAuthorizationUsed =
+          payment.exactFeeSplit
+            ? await readAuthorizationState(clients, payment, payment.feeAuthorization).catch(() => false)
+            : false;
+        if (canTreatUsedAuthorizationAsSettled(payment, { authorizationUsed, feeAuthorizationUsed })) {
+          return {
+            ...settlementSuccessPayload({
+              clients,
+              payment,
+              transactionHash: null,
+              feeTransactionHash: null,
+              receipt: null,
+              feeReceipt: null
+            }),
+            duplicate: true,
+            settlementState: "already_settled_after_error",
+            verification: {
+              ...verification,
+              authorizationUsed: true
+            }
+          };
+        }
+        const decodedError = decodeKnownExecutionError(error);
+        const relayerNonceConflict = isRelayerNonceConflictError(error);
+        const errorReason =
+          decodedError?.reason ??
+          (authorizationUsed
+            ? "EIP-3009 authorization nonce was already used."
+            : error instanceof Error
+              ? error.message
+              : String(error));
+
+        return {
+          success: false,
+          errorReason,
+          ...(decodedError
+            ? {
+                errorCode: decodedError.errorCode,
+                errorName: decodedError.errorName,
+                errorArgs: decodedError.errorArgs,
+                revertData: decodedError.revertData
+              }
+            : relayerNonceConflict
+              ? {
+                  errorCode: "relayer_nonce_conflict",
+                  settlementState: "settlement_pending",
+                  recoverable: true,
+                  retryAfterMs: 2500,
+                  relayer: clients.account.address
+                }
+              : authorizationUsed
+                ? { errorCode: "authorization_used" }
+                : { errorCode: "settlement_failed" }),
           verification: {
             ...verification,
-            authorizationUsed: true
+            authorizationUsed: Boolean(authorizationUsed || feeAuthorizationUsed),
+            ...(payment.exactFeeSplit ? { feeAuthorizationUsed } : {})
           }
         };
       }
-      const decodedError = decodeKnownExecutionError(error);
-      const relayerNonceConflict = isRelayerNonceConflictError(error);
-      const errorReason =
-        decodedError?.reason ??
-        (authorizationUsed
-          ? "EIP-3009 authorization nonce was already used."
-          : error instanceof Error
-            ? error.message
-            : String(error));
-
-      return {
-        success: false,
-        errorReason,
-        ...(decodedError
-          ? {
-              errorCode: decodedError.errorCode,
-              errorName: decodedError.errorName,
-              errorArgs: decodedError.errorArgs,
-              revertData: decodedError.revertData
-            }
-          : relayerNonceConflict
-            ? {
-                errorCode: "relayer_nonce_conflict",
-                settlementState: "settlement_pending",
-                recoverable: true,
-                retryAfterMs: 2500,
-                relayer: clients.account.address
-              }
-            : authorizationUsed
-              ? { errorCode: "authorization_used" }
-              : { errorCode: "settlement_failed" }),
-        verification: {
-          ...verification,
-          authorizationUsed: Boolean(authorizationUsed || feeAuthorizationUsed),
-          ...(payment.exactFeeSplit ? { feeAuthorizationUsed } : {})
-        }
-      };
+    });
+  } catch (error) {
+    if (!isRelayerSettlementLockError(error)) {
+      throw error;
     }
-  });
+
+    return {
+      success: false,
+      errorReason: error.message,
+      errorCode: error.errorCode ?? "relayer_lock_unavailable",
+      settlementState: "settlement_pending",
+      recoverable: error.recoverable !== false,
+      ...(Number.isFinite(Number(error.retryAfterMs)) ? { retryAfterMs: Number(error.retryAfterMs) } : {}),
+      relayer: clients.account.address,
+      verification
+    };
+  }
 }
 
 function readJsonBody(request) {
@@ -1628,6 +1965,157 @@ function sendJson(response, statusCode, body) {
   response.end(JSON.stringify(body));
 }
 
+function facilitatorOpenApiDocument() {
+  return {
+    openapi: "3.1.0",
+    info: {
+      title: "Zeko x402 hosted EVM facilitator",
+      version: facilitatorVersionInfo().version,
+      description: "Verify and settle signed EVM x402 payment payloads."
+    },
+    paths: {
+      "/health": { get: { summary: "Service health and version metadata" } },
+      "/version": { get: { summary: "Service version metadata" } },
+      "/supported": { get: { summary: "Supported EVM networks and redacted RPC configuration" } },
+      "/verify": {
+        post: {
+          summary: "Verify a signed EVM x402 payment payload",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/FacilitatorPaymentRequest" }
+              }
+            }
+          }
+        }
+      },
+      "/settle": {
+        post: {
+          summary: "Settle a verified signed EVM x402 payment payload",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/FacilitatorPaymentRequest" }
+              }
+            }
+          }
+        }
+      }
+    },
+    components: {
+      schemas: {
+        FacilitatorPaymentRequest: {
+          type: "object",
+          required: ["paymentPayload", "paymentRequirements"],
+          properties: {
+            paymentPayload: {
+              type: "object",
+              required: ["protocol", "networkId", "settlementRail", "payTo", "accepted", "payload"],
+              properties: {
+                protocol: { const: "x402" },
+                networkId: { type: "string", examples: ["eip155:8453"] },
+                settlementRail: { const: "evm" },
+                payTo: { type: "string", description: "Seller or escrow recipient address" },
+                accepted: {
+                  type: "object",
+                  required: ["asset", "amount"],
+                  properties: {
+                    asset: { type: "string", description: "ERC-20 token address string" },
+                    amount: { type: "string", description: "Atomic unit amount as a base-10 string" }
+                  }
+                },
+                payload: {
+                  type: "object",
+                  description: "Signed EIP-3009 authorization envelope. For exact fee-split rails, include feeAuthorization too."
+                }
+              }
+            },
+            paymentRequirements: {
+              type: "object",
+              description: "The resource's advertised x402 payment requirements."
+            }
+          }
+        }
+      }
+    }
+  };
+}
+
+function facilitatorDocsPayload() {
+  return {
+    service: "zeko-x402-evm-facilitator",
+    routes: {
+      "GET /health": "Health, version, and supported network metadata.",
+      "GET /supported": "Supported EVM network and redacted RPC metadata.",
+      "GET /openapi.json": "Machine-readable OpenAPI description.",
+      "POST /verify": "Verify a signed EVM x402 payment payload.",
+      "POST /settle": "Settle a signed EVM x402 payment payload."
+    },
+    requestShape: {
+      paymentPayload: {
+        protocol: "x402",
+        networkId: "eip155:8453",
+        settlementRail: "evm",
+        payTo: "0x...",
+        accepted: {
+          asset: "0x...",
+          amount: "250000"
+        },
+        payload: {
+          authorization: "EIP-3009 typed-data authorization envelope"
+        }
+      },
+      paymentRequirements: "The payment requirements object advertised by the protected resource."
+    },
+    notes: [
+      "Do not post the payment requirements object as paymentPayload.",
+      "accepted.asset must be the ERC-20 token address string.",
+      "Validation errors return HTTP 400 with errorCode=invalid_request."
+    ]
+  };
+}
+
+function facilitatorHttpErrorStatus(error) {
+  if (error instanceof SyntaxError) {
+    return 400;
+  }
+  if (isRelayerSettlementLockError(error)) {
+    return error.recoverable === false ? 500 : 503;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (
+    /is required|must be|requires|invalid|does not match|unsupported|unknown network|fee split|paymentPayload|paymentRequirements|authorization|signature|typedData/i.test(
+      message
+    )
+  ) {
+    return 400;
+  }
+  return 500;
+}
+
+function facilitatorHttpErrorBody(error) {
+  const statusCode = facilitatorHttpErrorStatus(error);
+  const message = error instanceof Error ? error.message : "unexpected_error";
+  return {
+    ok: false,
+    error: message,
+    errorCode:
+      statusCode === 400
+        ? "invalid_request"
+        : isRelayerSettlementLockError(error)
+          ? error.errorCode
+          : "unexpected_error",
+    ...(statusCode === 400
+      ? { expectedShape: "POST { paymentPayload, paymentRequirements }. See GET /docs or /openapi.json." }
+      : {}),
+    ...(isRelayerSettlementLockError(error) && Number.isFinite(Number(error.retryAfterMs))
+      ? { retryAfterMs: Number(error.retryAfterMs) }
+      : {})
+  };
+}
+
 export function facilitatorVersionInfo() {
   const commitSha =
     process.env.RENDER_GIT_COMMIT ??
@@ -1653,7 +2141,13 @@ export class SelfHostedEvmFacilitator {
     }
 
     this.networks = new Map(
-      networks.map((network) => [network.networkId, makeClients(network)])
+      networks.map((network) => [
+        network.networkId,
+        makeClients({
+          ...network,
+          relayerSettlementLock: network.relayerSettlementLock ?? input.relayerSettlementLock ?? null
+        })
+      ])
     );
   }
 
@@ -1677,7 +2171,8 @@ export class SelfHostedEvmFacilitator {
         rpcRetryCount: entry.rpcRetryCount,
         rpcRetryDelayMs: entry.rpcRetryDelayMs,
         rpcTimeoutMs: entry.rpcTimeoutMs,
-        relayer: entry.account.address
+        relayer: entry.account.address,
+        relayerSettlementCoordination: relayerSettlementLockInfo(entry.relayerSettlementLock)
       }))
     };
   }
@@ -1737,6 +2232,16 @@ export function createSelfHostedEvmFacilitatorHttpServer(input = {}) {
         return;
       }
 
+      if (request.method === "GET" && url.pathname === "/docs") {
+        sendJson(response, 200, facilitatorDocsPayload());
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/openapi.json") {
+        sendJson(response, 200, facilitatorOpenApiDocument());
+        return;
+      }
+
       if (request.method === "POST" && url.pathname === "/verify") {
         const body = await readJsonBody(request);
         sendJson(response, 200, await facilitator.verify(body));
@@ -1751,9 +2256,7 @@ export function createSelfHostedEvmFacilitatorHttpServer(input = {}) {
 
       sendJson(response, 404, { error: "not_found" });
     } catch (error) {
-      sendJson(response, 500, {
-        error: error instanceof Error ? error.message : "unexpected_error"
-      });
+      sendJson(response, facilitatorHttpErrorStatus(error), facilitatorHttpErrorBody(error));
     }
   });
 }
