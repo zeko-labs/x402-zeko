@@ -21,7 +21,8 @@ import {
   buildHostedFacilitatorRequest,
   buildPaymentPayload,
   buildPaymentRequired,
-  buildSignedEvmAuthorization
+  buildSignedEvmAuthorization,
+  toX402V2PaymentRequired
 } from "../src/index.js";
 
 function sampleContext(rail) {
@@ -192,15 +193,15 @@ test("maps exact Base fee-split payloads into hosted facilitator request shape",
   assert.equal(request.paymentPayload.payload.feeAuthorization.authorization.value, "5000");
 });
 
-test("maps atomic SantaClawz fee-split requirements without double-converting amount", () => {
+test("maps atomic EVM fee-split requirements without double-converting amount", () => {
   const payTo = "0x000000000000000000000000000000000000bEEF";
   const protocolFeePayTo = "0x000000000000000000000000000000000000FaCe";
   const requirements = {
     protocol: "x402",
     version: "2",
-    requestId: "req_santaclawz_atomic",
-    resource: "https://relay.santaclawz.ai/api/agents/agent_job_pack/hire",
-    description: "SantaClawz fixed-price paid execution.",
+    requestId: "req_atomic_evm",
+    resource: "https://service.example/api/agents/agent_job_pack/hire",
+    description: "Fixed-price paid execution.",
     accepts: [
       {
         scheme: "exact",
@@ -238,10 +239,10 @@ test("maps atomic SantaClawz fee-split requirements without double-converting am
   };
   const paymentPayload = buildPaymentPayload({
     requestId: requirements.requestId,
-    paymentId: "pay_santaclawz_atomic",
+    paymentId: "pay_atomic_evm",
     option: requirements.accepts[0],
     payer: "0x1111111111111111111111111111111111111111",
-    sessionId: "session_santaclawz_atomic",
+    sessionId: "session_atomic_evm",
     issuedAtIso: "2026-05-17T12:00:00.000Z",
     expiresAtIso: "2099-01-01T00:00:00.000Z",
     authorization: buildSignedEvmAuthorization(
@@ -263,6 +264,8 @@ test("maps atomic SantaClawz fee-split requirements without double-converting am
       { signature: "0xfeedface" }
     )
   });
+  assert.equal(paymentPayload.extensions.evm.amountUnit, "atomic");
+  assert.equal(toX402V2PaymentRequired(requirements).accepts[0].amount, "250000");
   const request = buildHostedFacilitatorRequest({
     paymentRequirements: requirements,
     paymentPayload

@@ -102,7 +102,7 @@ Do not post the advertised payment requirements object as `paymentPayload`. Vali
 
 By default, hosted facilitator clients treat advertised EVM x402 `amount` values as decimal token amounts and convert them to atomic token units using the asset decimals.
 
-Some platforms, including SantaClawz, advertise EVM payment requirements with atomic token units already. Those requirements must include:
+If an EVM payment requirement advertises atomic token units already, it must use the generic EVM extension:
 
 ```json
 {

@@ -1,3 +1,4 @@
+import { resolveEvmAmountUnit } from "./amount-units.js";
 import { resolveX402PaymentIdentifier } from "./x402-v2.js";
 
 function trimFraction(value) {
@@ -52,14 +53,7 @@ export function fromAtomicUnits(value, decimals) {
 }
 
 function amountUnit(input) {
-  const evm = input?.extensions?.evm;
-  const santaclawz = input?.extensions?.santaclawz;
-
-  if (evm?.amountUnit === "atomic" || santaclawz?.amountUnit === "atomic") {
-    return "atomic";
-  }
-
-  return "decimal";
+  return resolveEvmAmountUnit(input);
 }
 
 function amountToAtomicUnits(input) {

@@ -10,6 +10,7 @@ import {
   validatePaymentIdentifierRequirement
 } from "@x402/extensions";
 import { privateKeyToAccount } from "viem/accounts";
+import { resolveEvmAmountUnit } from "./amount-units.js";
 
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -65,6 +66,18 @@ function toAtomicAmount(value, decimals) {
   return (BigInt(whole) * 10n ** BigInt(decimals) + BigInt(normalizedFraction || "0")).toString();
 }
 
+function acceptedAmountToAtomic(option, amount) {
+  if (resolveEvmAmountUnit(option) === "atomic") {
+    if (typeof amount !== "string" || !/^\d+$/.test(amount)) {
+      throw new Error(`Invalid atomic amount: ${amount}`);
+    }
+
+    return amount;
+  }
+
+  return toAtomicAmount(amount, option.asset?.decimals ?? 0);
+}
+
 function sameAddress(left, right) {
   return (
     typeof left === "string" &&
@@ -96,7 +109,7 @@ function buildV2AcceptedOption(option) {
   return {
     scheme: option.scheme,
     network: option.network,
-    amount: toAtomicAmount(amount, option.asset?.decimals ?? 0),
+    amount: acceptedAmountToAtomic(option, amount),
     asset: typeof option?.asset?.address === "string" && option.asset.address.length > 0 ? option.asset.address : "native",
     payTo: option.payTo,
     maxTimeoutSeconds: option?.extensions?.evm?.maxTimeoutSeconds ?? 60,

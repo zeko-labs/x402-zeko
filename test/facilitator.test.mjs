@@ -260,7 +260,7 @@ test("settles atomic EVM amounts against decimal sponsored budgets", () => {
     payTo: "0x000000000000000000000000000000000000bEEF",
     sessionId: "session_atomic_budget",
     turnId: "turn_atomic_budget",
-    resource: "https://relay.santaclawz.ai/api/agents/agent/hire",
+    resource: "https://service.example/api/agents/agent/hire",
     networkId: "eip155:8453",
     extensions: {
       evm: {

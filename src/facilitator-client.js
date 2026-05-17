@@ -1,3 +1,4 @@
+import { resolveEvmAmountUnit } from "./amount-units.js";
 import { toAtomicUnits } from "./ledger.js";
 
 function isRecord(value) {
@@ -123,18 +124,7 @@ function assertExactEvmAuthorization(payload, field = "authorization") {
 }
 
 function evmAmountUnit(option) {
-  const evm = option?.extensions?.evm;
-  const santaclawz = option?.extensions?.santaclawz;
-
-  if (evm?.amountUnit === "atomic" || santaclawz?.amountUnit === "atomic") {
-    return "atomic";
-  }
-
-  if (evm?.amountUnit === "decimal" || santaclawz?.amountUnit === "decimal") {
-    return "decimal";
-  }
-
-  return "decimal";
+  return resolveEvmAmountUnit(option);
 }
 
 function resolveHostedAtomicAmount(option, amount) {

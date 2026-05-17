@@ -1,3 +1,4 @@
+export * from "./amount-units.js";
 export * from "./digest.js";
 export * from "./evm-escrow.js";
 export * from "./evm-facilitator.js";
