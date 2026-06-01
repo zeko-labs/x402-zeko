@@ -319,7 +319,7 @@ export function buildSettlementResponse(input) {
     payTo: input.payload.payTo,
     settlementState: input.duplicate ? "replayed" : "settled",
     settledAtIso: input.settledAtIso,
-    eventIds: [...input.eventIds],
+    eventIds: Array.isArray(input.eventIds) ? [...input.eventIds] : [],
     payToBudget: {
       budgetAsset: input.budgetAsset ?? input.payload.asset,
       sponsoredBudget: input.sponsoredBudget,

@@ -21,7 +21,8 @@ import {
   buildHostedFacilitatorRequest,
   buildPaymentPayload,
   buildPaymentRequired,
-  buildSignedEvmAuthorization
+  buildSignedEvmAuthorization,
+  toX402V2PaymentRequired
 } from "../src/index.js";
 
 function sampleContext(rail) {
@@ -190,6 +191,92 @@ test("maps exact Base fee-split payloads into hosted facilitator request shape",
     "0x000000000000000000000000000000000000FaCe"
   );
   assert.equal(request.paymentPayload.payload.feeAuthorization.authorization.value, "5000");
+});
+
+test("maps atomic EVM fee-split requirements without double-converting amount", () => {
+  const payTo = "0x000000000000000000000000000000000000bEEF";
+  const protocolFeePayTo = "0x000000000000000000000000000000000000FaCe";
+  const requirements = {
+    protocol: "x402",
+    version: "2",
+    requestId: "req_atomic_evm",
+    resource: "https://service.example/api/agents/agent_job_pack/hire",
+    description: "Fixed-price paid execution.",
+    accepts: [
+      {
+        scheme: "exact",
+        settlementRail: "evm",
+        network: "eip155:8453",
+        asset: {
+          symbol: "USDC",
+          decimals: 6,
+          standard: "erc20",
+          address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+        },
+        amount: "250000",
+        price: "250000",
+        payTo,
+        settlementModel: "x402-exact-evm-fee-split-v1",
+        extensions: {
+          evm: {
+            amountUnit: "atomic",
+            eip712Name: "USD Coin",
+            assetVersion: "2",
+            feeSplit: {
+              version: "protocol-owner-fee-v1",
+              feeBps: 10,
+              grossAmount: "250000",
+              sellerAmount: "248000",
+              protocolFeeAmount: "2000",
+              sellerPayTo: payTo,
+              protocolFeePayTo,
+              feeSettlementMode: "exact-eip3009-split-v1"
+            }
+          }
+        }
+      }
+    ]
+  };
+  const paymentPayload = buildPaymentPayload({
+    requestId: requirements.requestId,
+    paymentId: "pay_atomic_evm",
+    option: requirements.accepts[0],
+    payer: "0x1111111111111111111111111111111111111111",
+    sessionId: "session_atomic_evm",
+    issuedAtIso: "2026-05-17T12:00:00.000Z",
+    expiresAtIso: "2099-01-01T00:00:00.000Z",
+    authorization: buildSignedEvmAuthorization(
+      buildBaseUsdcExactEip3009Intent({
+        from: "0x1111111111111111111111111111111111111111",
+        to: payTo,
+        amount: "0.248",
+        nonce: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }),
+      { signature: "0xfeedbeef" }
+    ),
+    feeAuthorization: buildSignedEvmAuthorization(
+      buildBaseUsdcExactEip3009Intent({
+        from: "0x1111111111111111111111111111111111111111",
+        to: protocolFeePayTo,
+        amount: "0.002",
+        nonce: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }),
+      { signature: "0xfeedface" }
+    )
+  });
+  assert.equal(paymentPayload.extensions.evm.amountUnit, "atomic");
+  assert.equal(toX402V2PaymentRequired(requirements).accepts[0].amount, "250000");
+  const request = buildHostedFacilitatorRequest({
+    paymentRequirements: requirements,
+    paymentPayload
+  });
+
+  assert.equal(request.paymentPayload.accepted.amount, "250000");
+  assert.equal(request.paymentPayload.accepted.extra.feeSplit.grossAmount, "250000");
+  assert.equal(request.paymentPayload.accepted.extra.feeSplit.sellerAmount, "248000");
+  assert.equal(request.paymentPayload.accepted.extra.feeSplit.protocolFeeAmount, "2000");
+  assert.equal(request.paymentPayload.payload.authorization.value, "248000");
+  assert.equal(request.paymentPayload.payload.feeAuthorization.authorization.value, "2000");
 });
 
 test("maps reserve-release Base payloads into hosted facilitator request shape with escrow metadata", () => {

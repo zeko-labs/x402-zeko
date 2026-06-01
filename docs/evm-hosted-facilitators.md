@@ -98,6 +98,24 @@ Both `/verify` and `/settle` expect:
 
 Do not post the advertised payment requirements object as `paymentPayload`. Validation errors return HTTP 400 with `errorCode: "invalid_request"` and a specific message such as `paymentPayload.accepted.asset is required.`
 
+## Amount units
+
+By default, hosted facilitator clients treat advertised EVM x402 `amount` values as decimal token amounts and convert them to atomic token units using the asset decimals.
+
+If an EVM payment requirement advertises atomic token units already, it must use the generic EVM extension:
+
+```json
+{
+  "extensions": {
+    "evm": {
+      "amountUnit": "atomic"
+    }
+  }
+}
+```
+
+When `amountUnit` is `atomic`, `amount: "250000"` means 250,000 USDC minor units, or `$0.25` for a 6-decimal USDC token. The hosted facilitator client must not convert it again. Fee-split fields such as `grossAmount`, `sellerAmount`, and `protocolFeeAmount` are always atomic unit strings.
+
 ## Relayer scaling
 
 The self-hosted facilitator keeps the single-instance path simple: settlements are serialized in-process per `{ networkId, relayer }`, then the facilitator fetches the pending nonce and broadcasts. That is enough for one service instance per relayer wallet.

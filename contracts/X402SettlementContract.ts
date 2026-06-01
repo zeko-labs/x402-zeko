@@ -109,6 +109,7 @@ export class X402SettlementContract extends SmartContract {
 
     const [nextRoot] = paymentWitness.computeRootAndKey(settlementLeaf);
     this.settlementRoot.set(nextRoot);
+    this.send({ to: beneficiary, amount: amountNanomina });
 
     this.emitEvent(
       'exactSettlement',

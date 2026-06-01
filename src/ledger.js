@@ -1,3 +1,4 @@
+import { resolveEvmAmountUnit } from "./amount-units.js";
 import { resolveX402PaymentIdentifier } from "./x402-v2.js";
 
 function trimFraction(value) {
@@ -49,6 +50,22 @@ export function fromAtomicUnits(value, decimals) {
     : "";
   const normalized = trimFraction(`${whole}.${fraction}`);
   return normalized.length === 0 ? "0" : normalized;
+}
+
+function amountUnit(input) {
+  return resolveEvmAmountUnit(input);
+}
+
+function amountToAtomicUnits(input) {
+  if (amountUnit(input) === "atomic") {
+    if (typeof input?.amount !== "string" || !/^\d+$/.test(input.amount)) {
+      throw new Error(`Invalid atomic amount: ${input?.amount}`);
+    }
+
+    return BigInt(input.amount);
+  }
+
+  return toAtomicUnits(input.amount, input.asset.decimals);
 }
 
 export class InMemorySettlementLedger {
@@ -105,7 +122,7 @@ export class InMemorySettlementLedger {
       throw new Error("Settlement asset does not match this ledger's sponsored budget asset.");
     }
 
-    const amount = toAtomicUnits(input.amount, input.asset.decimals);
+    const amount = amountToAtomicUnits(input);
 
     if (amount <= 0n) {
       throw new Error("x402 amount must be greater than zero.");
@@ -115,7 +132,9 @@ export class InMemorySettlementLedger {
 
     if (remaining < amount) {
       throw new Error(
-        `Insufficient sponsored budget for x402 settlement. Need ${input.amount} ${input.asset.symbol} but only ${this.sponsoredRemaining} ${this.budgetAsset.symbol} remains.`
+        amountUnit(input) === "atomic"
+          ? `Insufficient sponsored budget for x402 settlement. Need ${input.amount} atomic ${input.asset.symbol} units (${fromAtomicUnits(amount, input.asset.decimals)} ${input.asset.symbol}) but only ${toAtomicUnits(this.sponsoredRemaining, this.budgetAsset.decimals).toString()} atomic ${this.budgetAsset.symbol} units (${this.sponsoredRemaining} ${this.budgetAsset.symbol}) remain.`
+          : `Insufficient sponsored budget for x402 settlement. Need ${input.amount} ${input.asset.symbol} but only ${this.sponsoredRemaining} ${this.budgetAsset.symbol} remains.`
       );
     }
 

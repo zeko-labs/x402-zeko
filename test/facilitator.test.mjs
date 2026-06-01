@@ -28,6 +28,7 @@ import {
   buildReserveReleaseResultCommitment,
   buildCatalog,
   buildPaymentContextDigest,
+  buildPaymentPayload,
   buildPaymentRequired,
   buildSignedEvmAuthorization,
   buildSignedPaymentPayload,
@@ -237,6 +238,70 @@ test("verifies and settles either Zeko-native or EVM payments", () => {
   assert.equal(settlementResponse.settlementState, "replayed");
   assert.equal(settlementResponse.payToBudget.budgetAsset.symbol, "USDC");
   assert.equal(typeof settlementResponse.receiptDigest.sha256Hex, "string");
+});
+
+test("buildSettlementResponse defaults missing event ids to an empty list", () => {
+  const context = sampleContext();
+  const required = buildPaymentRequired(context);
+  const option = required.accepts.find((entry) => entry.settlementRail === "evm");
+  const payload = buildPaymentPayload({
+    requestId: required.requestId,
+    paymentId: "pay_missing_event_ids_001",
+    option,
+    payer: "0x2222222222222222222222222222222222222222",
+    sessionId: context.sessionId,
+    turnId: context.turnId,
+    issuedAtIso: "2026-04-23T12:00:00.000Z",
+    expiresAtIso: "2099-01-01T00:00:00.000Z"
+  });
+  const response = buildSettlementResponse({
+    payload,
+    duplicate: false,
+    settledAtIso: "2026-04-23T12:31:00.000Z",
+    remainingBudget: "0.50",
+    sponsoredBudget: "1.00",
+    budgetAsset: option.asset,
+    proofBundleUrl: context.proofBundleUrl,
+    verifyUrl: context.verifyUrl,
+    settlementModel: option.settlementModel,
+    evm: option.extensions.evm
+  });
+
+  assert.deepEqual(response.eventIds, []);
+});
+
+test("settles atomic EVM amounts against decimal sponsored budgets", () => {
+  const asset = {
+    symbol: "USDC",
+    decimals: 6,
+    standard: "erc20",
+    address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+  };
+  const ledger = new InMemorySettlementLedger({
+    budgetAsset: asset,
+    sponsoredBudget: "10"
+  });
+  const settlement = ledger.settle({
+    paymentId: "pay_atomic_budget_001",
+    requestId: "req_atomic_budget_001",
+    settlementRail: "evm",
+    amount: "250000",
+    asset,
+    payer: "0x2222222222222222222222222222222222222222",
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    sessionId: "session_atomic_budget",
+    turnId: "turn_atomic_budget",
+    resource: "https://service.example/api/agents/agent/hire",
+    networkId: "eip155:8453",
+    extensions: {
+      evm: {
+        amountUnit: "atomic"
+      }
+    }
+  });
+
+  assert.equal(settlement.duplicate, false);
+  assert.equal(settlement.remainingBudget, "9.75");
 });
 
 test("builds concrete settlement intents for the chosen Zeko and Base targets", () => {

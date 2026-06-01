@@ -199,14 +199,15 @@ async function renewHttpRelayerSettlementLock(config, key, lockId, context) {
     ttlMs: config.ttlMs,
     context
   });
+  const returnedLockId = json?.lockId ?? json?.id;
+  const lockIdMatches = returnedLockId !== undefined && String(returnedLockId) === String(lockId);
   const renewed =
     response.ok &&
     (
       json?.renewed === true ||
       json?.ok === true ||
       json?.acquired === true ||
-      json?.lockId === lockId ||
-      json?.id === lockId
+      lockIdMatches
     );
 
   if (renewed) {
@@ -225,6 +226,23 @@ async function renewHttpRelayerSettlementLock(config, key, lockId, context) {
   });
 }
 
+function reportRelayerLockRenewalFailure(config, error, context) {
+  if (typeof config.onRenewalFailure === "function") {
+    config.onRenewalFailure(error, context);
+    return;
+  }
+
+  console.error(
+    "[zeko-x402] relayer settlement lock renewal failed",
+    {
+      key: context.key,
+      lockId: context.lockId,
+      renewalFailures: context.renewalFailures,
+      error: error instanceof Error ? error.message : String(error)
+    }
+  );
+}
+
 function startHttpRelayerSettlementLockRenewal(config, key, lockId, context) {
   if (config.renewIntervalMs <= 0) {
     return async () => {};
@@ -232,9 +250,18 @@ function startHttpRelayerSettlementLockRenewal(config, key, lockId, context) {
 
   let stopped = false;
   let renewal = Promise.resolve();
+  let renewalFailures = 0;
   const timer = setInterval(() => {
     renewal = renewal
-      .catch(() => {})
+      .catch((error) => {
+        renewalFailures += 1;
+        reportRelayerLockRenewalFailure(config, error, {
+          key,
+          lockId,
+          context,
+          renewalFailures
+        });
+      })
       .then(async () => {
         if (!stopped) {
           await renewHttpRelayerSettlementLock(config, key, lockId, context);
@@ -246,7 +273,15 @@ function startHttpRelayerSettlementLockRenewal(config, key, lockId, context) {
   return async () => {
     stopped = true;
     clearInterval(timer);
-    await renewal.catch(() => {});
+    await renewal.catch((error) => {
+      renewalFailures += 1;
+      reportRelayerLockRenewalFailure(config, error, {
+        key,
+        lockId,
+        context,
+        renewalFailures
+      });
+    });
   };
 }
 
@@ -266,7 +301,8 @@ export function createHttpRelayerSettlementLock(input = {}) {
     ),
     acquireTimeoutMs: parsePositiveInteger(input.acquireTimeoutMs, 15_000),
     retryDelayMs: parsePositiveInteger(input.retryDelayMs, 250),
-    requestTimeoutMs: parsePositiveInteger(input.requestTimeoutMs, 5_000)
+    requestTimeoutMs: parsePositiveInteger(input.requestTimeoutMs, 5_000),
+    onRenewalFailure: typeof input.onRenewalFailure === "function" ? input.onRenewalFailure : null
   };
 
   return {
@@ -545,7 +581,7 @@ async function withRelayerSettlementQueue(clients, fn) {
 function createRelayerTransactionManager(clients) {
   let nextNonce = null;
 
-  async function allocateNonceParams() {
+  async function nextNonceParams() {
     if (typeof clients.publicClient.getTransactionCount !== "function") {
       return {};
     }
@@ -560,17 +596,34 @@ function createRelayerTransactionManager(clients) {
       nextNonce = Number(pendingNonce);
     }
 
-    const nonce = nextNonce;
-    nextNonce += 1;
-    return Number.isFinite(nonce) ? { nonce } : {};
+    return Number.isFinite(nextNonce) ? { nonce: nextNonce } : {};
+  }
+
+  function markNonceConsumed(params) {
+    if (Number.isFinite(params?.nonce)) {
+      nextNonce = params.nonce + 1;
+    }
+  }
+
+  function resetNonce() {
+    nextNonce = null;
   }
 
   return {
     async writeContract(params) {
-      return await clients.walletClient.writeContract({
-        ...params,
-        ...(await allocateNonceParams())
-      });
+      const nonceParams = await nextNonceParams();
+
+      try {
+        const hash = await clients.walletClient.writeContract({
+          ...params,
+          ...nonceParams
+        });
+        markNonceConsumed(nonceParams);
+        return hash;
+      } catch (error) {
+        resetNonce();
+        throw error;
+      }
     }
   };
 }
@@ -1376,7 +1429,7 @@ function makeClients(config) {
       transport
     });
 
-  return {
+  const clients = {
     networkId,
     chain,
     rpcUrl,
@@ -1389,6 +1442,8 @@ function makeClients(config) {
     publicClient,
     walletClient
   };
+  clients.transactionManager = config?.transactionManager ?? createRelayerTransactionManager(clients);
+  return clients;
 }
 
 async function readAuthorizationState(clients, payment, authorization = payment.authorization) {
@@ -1470,13 +1525,13 @@ async function verifyHostedPayment(clients, input) {
 
   const usage = await readHostedPaymentUsage(clients, payment);
 
-  if (payment.exactFeeSplit && (usage.authorizationUsed || usage.feeAuthorizationUsed)) {
+  if (!payment.reserveRelease && (usage.authorizationUsed || usage.feeAuthorizationUsed)) {
     const outstandingAmount =
       (usage.authorizationUsed ? 0n : payment.authorization.value) +
-      (usage.feeAuthorizationUsed ? 0n : payment.feeAuthorization.value);
-    const bothUsed = usage.authorizationUsed && usage.feeAuthorizationUsed;
+      (payment.exactFeeSplit && !usage.feeAuthorizationUsed ? payment.feeAuthorization.value : 0n);
+    const fullySettled = usage.authorizationUsed && (!payment.exactFeeSplit || usage.feeAuthorizationUsed);
 
-    if (!bothUsed && usage.balance < outstandingAmount) {
+    if (!fullySettled && usage.balance < outstandingAmount) {
       return verificationSummary(payment, clients, {
         isValid: false,
         invalidReason: "Payer does not hold enough USDC for the unsettled x402 payment leg.",
@@ -1494,10 +1549,10 @@ async function verifyHostedPayment(clients, input) {
       authorizationUsed: usage.authorizationUsed,
       feeAuthorizationUsed: usage.feeAuthorizationUsed,
       balance: usage.balance,
-      settlementState: bothUsed ? "already_settled" : "partial_settlement",
-      recoverable: !bothUsed,
-      duplicate: bothUsed,
-      ...(bothUsed
+      settlementState: fullySettled ? "already_settled" : "partial_settlement",
+      recoverable: !fullySettled,
+      duplicate: fullySettled,
+      ...(fullySettled
         ? {}
         : { nextSettlementAction: usage.authorizationUsed ? "resume_protocol_fee" : "resume_seller" })
     });
@@ -1576,6 +1631,25 @@ function receiptPayload(receipt) {
         ? receipt.blockNumber.toString()
         : receipt.blockNumber
   };
+}
+
+function assertTransactionReceiptSuccess(receipt, label) {
+  if (receipt?.status === "reverted") {
+    throw new Error(`${label} transaction reverted.`);
+  }
+
+  return receipt;
+}
+
+async function waitForTransactionReceiptSuccess(clients, hash, label) {
+  if (!hash || typeof clients.publicClient.waitForTransactionReceipt !== "function") {
+    return null;
+  }
+
+  const receipt = await retryTransientRpc(clients, "waitForTransactionReceipt", async () => {
+    return await clients.publicClient.waitForTransactionReceipt({ hash });
+  });
+  return assertTransactionReceiptSuccess(receipt, label);
 }
 
 function settlementSuccessPayload(input) {
@@ -1712,228 +1786,225 @@ async function settleHostedPayment(clients, input) {
   const feeSignature = payment.exactFeeSplit ? parseSignature(payment.feeSignature) : null;
 
   try {
-    return await withRelayerSettlementQueue(clients, async () => {
-      const transactionManager = createRelayerTransactionManager(clients);
+    const broadcast = await withRelayerSettlementQueue(clients, async () => {
+      const transactionManager = clients.transactionManager ??= createRelayerTransactionManager(clients);
+      let feeTransactionHash = null;
+      let feeReceipt = null;
+      let transactionHash = null;
 
-      try {
-        let feeTransactionHash = null;
-        let feeReceipt = null;
-        const transactionHash = payment.reserveRelease
-          ? await transactionManager.writeContract({
+      if (payment.reserveRelease) {
+        transactionHash = await transactionManager.writeContract({
+          account: clients.account,
+          chain: clients.chain,
+          address: payment.reserveRelease.contractAddress,
+          abi: X402_RESERVE_RELEASE_ESCROW_ABI,
+          functionName: payment.reserveRelease.reserveMethod,
+          args: payment.reserveRelease.feeSplit
+            ? [
+                payment.reserveRelease.requestIdHash,
+                payment.reserveRelease.paymentIdHash,
+                payment.authorization.from,
+                payment.reserveRelease.feeSplit.sellerPayTo,
+                payment.reserveRelease.feeSplit.protocolFeePayTo,
+                payment.tokenAddress,
+                payment.reserveRelease.feeSplit.grossAmount,
+                payment.reserveRelease.feeSplit.sellerAmount,
+                payment.reserveRelease.feeSplit.protocolFeeAmount,
+                payment.reserveRelease.feeSplit.feeBps,
+                payment.authorization.validAfter,
+                payment.authorization.validBefore,
+                payment.authorization.nonce,
+                payment.reserveRelease.resultCommitment,
+                payment.reserveRelease.reserveExpiryUnix,
+                v,
+                r,
+                s
+              ]
+            : [
+                payment.reserveRelease.requestIdHash,
+                payment.reserveRelease.paymentIdHash,
+                payment.authorization.from,
+                payment.payTo,
+                payment.tokenAddress,
+                payment.authorization.value,
+                payment.authorization.validAfter,
+                payment.authorization.validBefore,
+                payment.authorization.nonce,
+                payment.reserveRelease.resultCommitment,
+                payment.reserveRelease.reserveExpiryUnix,
+                v,
+                r,
+                s
+              ]
+        });
+      } else if (payment.exactFeeSplit) {
+        if (!initialUsage.feeAuthorizationUsed) {
+          feeTransactionHash = await transactionManager.writeContract({
             account: clients.account,
             chain: clients.chain,
-            address: payment.reserveRelease.contractAddress,
-            abi: X402_RESERVE_RELEASE_ESCROW_ABI,
-            functionName: payment.reserveRelease.reserveMethod,
-            args: payment.reserveRelease.feeSplit
-              ? [
-                  payment.reserveRelease.requestIdHash,
-                  payment.reserveRelease.paymentIdHash,
-                  payment.authorization.from,
-                  payment.reserveRelease.feeSplit.sellerPayTo,
-                  payment.reserveRelease.feeSplit.protocolFeePayTo,
-                  payment.tokenAddress,
-                  payment.reserveRelease.feeSplit.grossAmount,
-                  payment.reserveRelease.feeSplit.sellerAmount,
-                  payment.reserveRelease.feeSplit.protocolFeeAmount,
-                  payment.reserveRelease.feeSplit.feeBps,
-                  payment.authorization.validAfter,
-                  payment.authorization.validBefore,
-                  payment.authorization.nonce,
-                  payment.reserveRelease.resultCommitment,
-                  payment.reserveRelease.reserveExpiryUnix,
-                  v,
-                  r,
-                  s
-                ]
-              : [
-                  payment.reserveRelease.requestIdHash,
-                  payment.reserveRelease.paymentIdHash,
-                  payment.authorization.from,
-                  payment.payTo,
-                  payment.tokenAddress,
-                  payment.authorization.value,
-                  payment.authorization.validAfter,
-                  payment.authorization.validBefore,
-                  payment.authorization.nonce,
-                  payment.reserveRelease.resultCommitment,
-                  payment.reserveRelease.reserveExpiryUnix,
-                  v,
-                  r,
-                  s
-                ]
-            })
-          : payment.exactFeeSplit
-            ? await (async () => {
-                if (!initialUsage.feeAuthorizationUsed) {
-                  feeTransactionHash = await transactionManager.writeContract({
-                  account: clients.account,
-                  chain: clients.chain,
-                  address: payment.tokenAddress,
-                  abi: USDC_EIP3009_ABI,
-                  functionName: "transferWithAuthorization",
-                  args: [
-                    payment.feeAuthorization.from,
-                    payment.feeAuthorization.to,
-                    payment.feeAuthorization.value,
-                    payment.feeAuthorization.validAfter,
-                    payment.feeAuthorization.validBefore,
-                    payment.feeAuthorization.nonce,
-                    feeSignature.v,
-                    feeSignature.r,
-                    feeSignature.s
-                  ]
-                  });
-
-                  if (typeof clients.publicClient.waitForTransactionReceipt === "function") {
-                    feeReceipt = await retryTransientRpc(clients, "waitForTransactionReceipt", async () => {
-                      return await clients.publicClient.waitForTransactionReceipt({ hash: feeTransactionHash });
-                    });
-                  }
-                }
-
-                if (initialUsage.authorizationUsed) {
-                  return null;
-                }
-
-                return await transactionManager.writeContract({
-                  account: clients.account,
-                  chain: clients.chain,
-                  address: payment.tokenAddress,
-                  abi: USDC_EIP3009_ABI,
-                  functionName: "transferWithAuthorization",
-                  args: [
-                    payment.authorization.from,
-                    payment.authorization.to,
-                    payment.authorization.value,
-                    payment.authorization.validAfter,
-                    payment.authorization.validBefore,
-                    payment.authorization.nonce,
-                    v,
-                    r,
-                    s
-                  ]
-                });
-              })()
-            : await transactionManager.writeContract({
-                account: clients.account,
-                chain: clients.chain,
-                address: payment.tokenAddress,
-                abi: USDC_EIP3009_ABI,
-                functionName: "transferWithAuthorization",
-                args: [
-                  payment.authorization.from,
-                  payment.authorization.to,
-                  payment.authorization.value,
-                  payment.authorization.validAfter,
-                  payment.authorization.validBefore,
-                  payment.authorization.nonce,
-                  v,
-                  r,
-                  s
-                ]
-              });
-        const receipt =
-          transactionHash && typeof clients.publicClient.waitForTransactionReceipt === "function"
-            ? await retryTransientRpc(clients, "waitForTransactionReceipt", async () => {
-                return await clients.publicClient.waitForTransactionReceipt({ hash: transactionHash });
-              })
-            : null;
-
-        return {
-          ...settlementSuccessPayload({
+            address: payment.tokenAddress,
+            abi: USDC_EIP3009_ABI,
+            functionName: "transferWithAuthorization",
+            args: [
+              payment.feeAuthorization.from,
+              payment.feeAuthorization.to,
+              payment.feeAuthorization.value,
+              payment.feeAuthorization.validAfter,
+              payment.feeAuthorization.validBefore,
+              payment.feeAuthorization.nonce,
+              feeSignature.v,
+              feeSignature.r,
+              feeSignature.s
+            ]
+          });
+          feeReceipt = await waitForTransactionReceiptSuccess(
             clients,
-            payment,
-            transactionHash,
             feeTransactionHash,
-            receipt,
-            feeReceipt
-          }),
-          ...(initialUsage.authorizationUsed || initialUsage.feeAuthorizationUsed
-            ? {
-                resumed: true,
-                settlementState: "resumed"
-              }
-            : {}),
-          verification
-        };
-      } catch (error) {
-        const authorizationUsed = await readAuthorizationState(clients, payment).catch(() => false);
-        const feeAuthorizationUsed =
-          payment.exactFeeSplit
-            ? await readAuthorizationState(clients, payment, payment.feeAuthorization).catch(() => false)
-            : false;
-        if (canTreatUsedAuthorizationAsSettled(payment, { authorizationUsed, feeAuthorizationUsed })) {
-          return {
-            ...settlementSuccessPayload({
-              clients,
-              payment,
-              transactionHash: null,
-              feeTransactionHash: null,
-              receipt: null,
-              feeReceipt: null
-            }),
-            duplicate: true,
-            settlementState: "already_settled_after_error",
-            verification: {
-              ...verification,
-              authorizationUsed: true
-            }
-          };
+            "Protocol fee"
+          );
         }
-        const decodedError = decodeKnownExecutionError(error);
-        const relayerNonceConflict = isRelayerNonceConflictError(error);
-        const errorReason =
-          decodedError?.reason ??
-          (authorizationUsed
-            ? "EIP-3009 authorization nonce was already used."
-            : error instanceof Error
-              ? error.message
-              : String(error));
 
-        return {
-          success: false,
-          errorReason,
-          ...(decodedError
-            ? {
-                errorCode: decodedError.errorCode,
-                errorName: decodedError.errorName,
-                errorArgs: decodedError.errorArgs,
-                revertData: decodedError.revertData
-              }
-            : relayerNonceConflict
-              ? {
-                  errorCode: "relayer_nonce_conflict",
-                  settlementState: "settlement_pending",
-                  recoverable: true,
-                  retryAfterMs: 2500,
-                  relayer: clients.account.address
-                }
-              : authorizationUsed
-                ? { errorCode: "authorization_used" }
-                : { errorCode: "settlement_failed" }),
-          verification: {
-            ...verification,
-            authorizationUsed: Boolean(authorizationUsed || feeAuthorizationUsed),
-            ...(payment.exactFeeSplit ? { feeAuthorizationUsed } : {})
-          }
-        };
+        if (!initialUsage.authorizationUsed) {
+          transactionHash = await transactionManager.writeContract({
+            account: clients.account,
+            chain: clients.chain,
+            address: payment.tokenAddress,
+            abi: USDC_EIP3009_ABI,
+            functionName: "transferWithAuthorization",
+            args: [
+              payment.authorization.from,
+              payment.authorization.to,
+              payment.authorization.value,
+              payment.authorization.validAfter,
+              payment.authorization.validBefore,
+              payment.authorization.nonce,
+              v,
+              r,
+              s
+            ]
+          });
+        }
+      } else {
+        transactionHash = await transactionManager.writeContract({
+          account: clients.account,
+          chain: clients.chain,
+          address: payment.tokenAddress,
+          abi: USDC_EIP3009_ABI,
+          functionName: "transferWithAuthorization",
+          args: [
+            payment.authorization.from,
+            payment.authorization.to,
+            payment.authorization.value,
+            payment.authorization.validAfter,
+            payment.authorization.validBefore,
+            payment.authorization.nonce,
+            v,
+            r,
+            s
+          ]
+        });
       }
+
+      return { transactionHash, feeTransactionHash, feeReceipt };
     });
+
+    const receipt = await waitForTransactionReceiptSuccess(
+      clients,
+      broadcast.transactionHash,
+      payment.reserveRelease ? "Reserve-release" : "Settlement"
+    );
+
+    return {
+      ...settlementSuccessPayload({
+        clients,
+        payment,
+        transactionHash: broadcast.transactionHash,
+        feeTransactionHash: broadcast.feeTransactionHash,
+        receipt,
+        feeReceipt: broadcast.feeReceipt
+      }),
+      ...(initialUsage.authorizationUsed || initialUsage.feeAuthorizationUsed
+        ? {
+            resumed: true,
+            settlementState: "resumed"
+          }
+        : {}),
+      verification
+    };
   } catch (error) {
-    if (!isRelayerSettlementLockError(error)) {
-      throw error;
+    if (isRelayerSettlementLockError(error)) {
+      return {
+        success: false,
+        errorReason: error.message,
+        errorCode: error.errorCode ?? "relayer_lock_unavailable",
+        settlementState: "settlement_pending",
+        recoverable: error.recoverable !== false,
+        ...(Number.isFinite(Number(error.retryAfterMs)) ? { retryAfterMs: Number(error.retryAfterMs) } : {}),
+        relayer: clients.account.address,
+        verification
+      };
     }
+
+    const authorizationUsed = await readAuthorizationState(clients, payment).catch(() => false);
+    const feeAuthorizationUsed =
+      payment.exactFeeSplit
+        ? await readAuthorizationState(clients, payment, payment.feeAuthorization).catch(() => false)
+        : false;
+    if (canTreatUsedAuthorizationAsSettled(payment, { authorizationUsed, feeAuthorizationUsed })) {
+      return {
+        ...settlementSuccessPayload({
+          clients,
+          payment,
+          transactionHash: null,
+          feeTransactionHash: null,
+          receipt: null,
+          feeReceipt: null
+        }),
+        duplicate: true,
+        settlementState: "already_settled_after_error",
+        verification: {
+          ...verification,
+          authorizationUsed: true
+        }
+      };
+    }
+
+    const decodedError = decodeKnownExecutionError(error);
+    const relayerNonceConflict = isRelayerNonceConflictError(error);
+    const errorReason =
+      decodedError?.reason ??
+      (authorizationUsed
+        ? "EIP-3009 authorization nonce was already used."
+        : error instanceof Error
+          ? error.message
+          : String(error));
 
     return {
       success: false,
-      errorReason: error.message,
-      errorCode: error.errorCode ?? "relayer_lock_unavailable",
-      settlementState: "settlement_pending",
-      recoverable: error.recoverable !== false,
-      ...(Number.isFinite(Number(error.retryAfterMs)) ? { retryAfterMs: Number(error.retryAfterMs) } : {}),
-      relayer: clients.account.address,
-      verification
+      errorReason,
+      ...(decodedError
+        ? {
+            errorCode: decodedError.errorCode,
+            errorName: decodedError.errorName,
+            errorArgs: decodedError.errorArgs,
+            revertData: decodedError.revertData
+          }
+        : relayerNonceConflict
+          ? {
+              errorCode: "relayer_nonce_conflict",
+              settlementState: "settlement_pending",
+              recoverable: true,
+              retryAfterMs: 2500,
+              relayer: clients.account.address
+            }
+          : authorizationUsed
+            ? { errorCode: "authorization_used" }
+            : { errorCode: "settlement_failed" }),
+      verification: {
+        ...verification,
+        authorizationUsed: Boolean(authorizationUsed || feeAuthorizationUsed),
+        ...(payment.exactFeeSplit ? { feeAuthorizationUsed } : {})
+      }
     };
   }
 }
@@ -2086,7 +2157,7 @@ function facilitatorHttpErrorStatus(error) {
   }
   const message = error instanceof Error ? error.message : String(error);
   if (
-    /is required|must be|requires|invalid|does not match|unsupported|unknown network|fee split|paymentPayload|paymentRequirements|authorization|signature|typedData/i.test(
+    /is required|must be|requires|does not match|unsupported|unknown network|fee split|paymentPayload|paymentRequirements|authorization|signature|typedData|accepted\.|payload\.|asset\.|scheme=|networkId|payTo|payer|token address|amount string|base-10 integer|invalid_request|invalid amount|invalid atomic amount|invalid asset decimals|invalid address|invalid payment|invalid authorization|invalid signature/i.test(
       message
     )
   ) {

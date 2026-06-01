@@ -205,7 +205,7 @@ That is the whole design: OpenZeppelin handles the generic security/control piec
 
 ### V4 fee-on-reserve cap
 
-`X402BaseUSDCReserveEscrowV4` adds the fee-on-reserve path used by SantaClawz-style marketplace fees.
+`X402BaseUSDCReserveEscrowV4` adds the fee-on-reserve path used by marketplace-style protocol fees.
 
 The V4 contract has a deployment-configured maximum:
 
@@ -220,7 +220,7 @@ rejects any reservation where:
 - `grossAmount` does not equal `sellerAmount + protocolFeeAmount`
 
 This keeps fee ceilings enforceable onchain without forcing every x402 integrator into the same
-business model. For example, SantaClawz can deploy an escrow with a `100` bps maximum while another
+business model. For example, one marketplace can deploy an escrow with a `100` bps maximum while another
 application can choose its own cap. The x402 primitive only enforces the configured cap and fee math;
 the app decides the economic policy.
 

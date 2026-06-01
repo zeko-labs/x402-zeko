@@ -25,6 +25,7 @@ import {
   createEIP712OfferReceiptIssuerFromPrivateKey,
   toX402V2PaymentPayload,
   toX402V2PaymentRequired,
+  withPaymentIdentifierExtension,
   verifyPayment
 } from "../src/index.js";
 
@@ -179,6 +180,56 @@ test("payment-identifier extension drives duplicate settlement protection", () =
   assert.equal(replaySettlement.duplicate, true);
   assert.equal(firstSettlement.settlement.idempotencyKey, "pay_identifier_duplicate_001");
   assert.equal(replaySettlement.settlement.idempotencyKey, "pay_identifier_duplicate_001");
+});
+
+test("extension merging preserves primitive extension values", () => {
+  const context = buildInteropContext();
+  const paymentRequired = buildPaymentRequired(context);
+  const option = {
+    ...paymentRequired.accepts[0],
+    extensions: {
+      ...paymentRequired.accepts[0].extensions,
+      "primitive-option-extension": "seller-policy-v1"
+    }
+  };
+  const payload = buildPaymentPayload({
+    requestId: paymentRequired.requestId,
+    paymentId: "pay_primitive_extension_001",
+    option,
+    payer: "0x2222222222222222222222222222222222222222",
+    sessionId: context.sessionId,
+    turnId: context.turnId,
+    extensions: {
+      "primitive-payload-extension": true
+    }
+  });
+  const withIdentifier = withPaymentIdentifierExtension(
+    { "primitive-identifier-extension": "kept" },
+    "pay_primitive_extension_001",
+    true
+  );
+
+  assert.equal(payload.extensions["primitive-option-extension"], "seller-policy-v1");
+  assert.equal(payload.extensions["primitive-payload-extension"], true);
+  assert.equal(withIdentifier["primitive-identifier-extension"], "kept");
+});
+
+test("x402 v2 amount conversion rejects precision below token atomic units", () => {
+  const context = {
+    ...buildInteropContext(),
+    rails: [
+      buildBaseMainnetUsdcRail({
+        payTo: "0x1111111111111111111111111111111111111111",
+        amount: "0.0000001"
+      })
+    ]
+  };
+  const paymentRequired = buildPaymentRequired(context);
+
+  assert.throws(
+    () => toX402V2PaymentRequired(paymentRequired),
+    /Invalid amount precision for 6-decimal asset/
+  );
 });
 
 test("signed offers and receipts interoperate with official x402 extractors and verifiers", async () => {

@@ -29,6 +29,34 @@ function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function mergeRecordEntry(target, key, value) {
+  if (isRecord(value) && isRecord(target[key])) {
+    target[key] = {
+      ...target[key],
+      ...value
+    };
+    return;
+  }
+
+  target[key] = value;
+}
+
+function mergeRecords(...records) {
+  const merged = {};
+
+  for (const record of records) {
+    if (!isRecord(record)) {
+      continue;
+    }
+
+    for (const [key, value] of Object.entries(record)) {
+      mergeRecordEntry(merged, key, value);
+    }
+  }
+
+  return merged;
+}
+
 function assertNonEmptyString(label, value) {
   if (typeof value !== "string" || value.length === 0) {
     throw new Error(`${label} is required.`);
@@ -283,9 +311,11 @@ export function buildPaymentPayload(input) {
         : typeof input.paymentId === "string" && input.paymentId.length > 0 && isRecord(input.extensions)
           ? input.paymentId
           : undefined;
+  const optionExtensions = isRecord(option?.extensions) ? option.extensions : undefined;
+  const inputExtensions = isRecord(input.extensions) ? input.extensions : undefined;
   const baseExtensions =
-    isRecord(input.extensions) || paymentIdentifier
-      ? input.extensions ?? {}
+    optionExtensions || inputExtensions || paymentIdentifier
+      ? mergeRecords(optionExtensions, inputExtensions)
       : undefined;
   const extensions =
     baseExtensions && paymentIdentifier
