@@ -19,6 +19,7 @@ The method:
 - checks the configured beneficiary
 - checks that the leaf for this payment is still empty
 - writes a new settlement leaf derived from the payment context
+- sends the settled amount from the zkApp account to the configured beneficiary
 - emits an `exactSettlement` event with the updated root
 
 ## Offchain hashing convention

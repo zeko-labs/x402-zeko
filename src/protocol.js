@@ -30,15 +30,15 @@ function isRecord(value) {
 }
 
 function mergeRecordEntry(target, key, value) {
-  if (!isRecord(value)) {
+  if (isRecord(value) && isRecord(target[key])) {
+    target[key] = {
+      ...target[key],
+      ...value
+    };
     return;
   }
 
-  const current = isRecord(target[key]) ? target[key] : {};
-  target[key] = {
-    ...current,
-    ...value
-  };
+  target[key] = value;
 }
 
 function mergeRecords(...records) {

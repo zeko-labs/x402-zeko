@@ -21,15 +21,15 @@ function cloneRecord(value) {
 }
 
 function mergeRecordEntry(target, key, value) {
-  if (!isRecord(value)) {
+  if (isRecord(value) && isRecord(target[key])) {
+    target[key] = {
+      ...target[key],
+      ...value
+    };
     return;
   }
 
-  const current = isRecord(target[key]) ? target[key] : {};
-  target[key] = {
-    ...current,
-    ...value
-  };
+  target[key] = value;
 }
 
 function mergeRecords(...records) {
@@ -62,6 +62,10 @@ function toAtomicAmount(value, decimals) {
   }
 
   const [whole, fraction = ""] = value.split(".");
+  if (fraction.length > decimals) {
+    throw new Error(`Invalid amount precision for ${decimals}-decimal asset: ${value}`);
+  }
+
   const normalizedFraction = `${fraction}${"0".repeat(decimals)}`.slice(0, decimals);
   return (BigInt(whole) * 10n ** BigInt(decimals) + BigInt(normalizedFraction || "0")).toString();
 }

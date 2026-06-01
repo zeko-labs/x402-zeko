@@ -183,6 +183,118 @@ test("self-hosted facilitator verifies and settles Base x402 payments", async ()
   assert.equal(mock.calls.some((entry) => entry[0] === "writeContract"), true);
 });
 
+test("self-hosted facilitator treats fully settled exact retries as idempotent success", async () => {
+  const calls = [];
+  const buyerAddress = privateKeyToAccount(BUYER_PRIVATE_KEY).address;
+  const usedNonce = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const mock = {
+    publicClient: {
+      readContract: async ({ functionName, args }) => {
+        calls.push(["readContract", functionName, ...(args ?? [])]);
+
+        if (functionName === "authorizationState") {
+          return String(args[1]).toLowerCase() === usedNonce;
+        }
+
+        if (functionName === "balanceOf") {
+          return 900000n;
+        }
+
+        throw new Error(`Unexpected readContract function: ${functionName}`);
+      }
+    },
+    walletClient: {
+      writeContract: async () => {
+        throw new Error("fully settled retry should not broadcast");
+      }
+    }
+  };
+  const rail = buildBaseMainnetUsdcRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    amount: "0.50"
+  });
+  const intent = buildBaseUsdcExactEip3009Intent({
+    from: buyerAddress,
+    to: rail.payTo,
+    amount: rail.amount,
+    nonce: usedNonce
+  });
+  const { requirements, payload } = await buildSignedPayment({ rail, intent });
+  const facilitator = new SelfHostedEvmFacilitator({
+    networks: [
+      {
+        networkId: "eip155:8453",
+        rpcUrl: "https://base.example",
+        relayerPrivateKey: RELAYER_PRIVATE_KEY,
+        publicClient: mock.publicClient,
+        walletClient: mock.walletClient
+      }
+    ]
+  });
+
+  const verification = await facilitator.verify({
+    paymentPayload: payload,
+    paymentRequirements: requirements
+  });
+  const settlement = await facilitator.settle({
+    paymentPayload: payload,
+    paymentRequirements: requirements
+  });
+
+  assert.equal(verification.isValid, true);
+  assert.equal(verification.settlementState, "already_settled");
+  assert.equal(verification.duplicate, true);
+  assert.equal(settlement.success, true);
+  assert.equal(settlement.duplicate, true);
+  assert.equal(settlement.settlementState, "already_settled");
+  assert.equal(calls.some((entry) => entry[0] === "writeContract"), false);
+});
+
+test("self-hosted facilitator rejects reverted settlement receipts", async () => {
+  const mock = createMockClients();
+  mock.publicClient = {
+    ...mock.publicClient,
+    waitForTransactionReceipt: async ({ hash }) => {
+      mock.calls.push(["waitForTransactionReceipt", hash]);
+      return {
+        status: "reverted",
+        blockHash: "0xblockhashdemo",
+        blockNumber: 123n
+      };
+    }
+  };
+  const rail = buildBaseMainnetUsdcRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    amount: "0.50"
+  });
+  const intent = buildBaseUsdcExactEip3009Intent({
+    from: privateKeyToAccount(BUYER_PRIVATE_KEY).address,
+    to: rail.payTo,
+    amount: rail.amount
+  });
+  const { requirements, payload } = await buildSignedPayment({ rail, intent });
+  const facilitator = new SelfHostedEvmFacilitator({
+    networks: [
+      {
+        networkId: "eip155:8453",
+        rpcUrl: "https://base.example",
+        relayerPrivateKey: RELAYER_PRIVATE_KEY,
+        publicClient: mock.publicClient,
+        walletClient: mock.walletClient
+      }
+    ]
+  });
+
+  const settlement = await facilitator.settle({
+    paymentPayload: payload,
+    paymentRequirements: requirements
+  });
+
+  assert.equal(settlement.success, false);
+  assert.equal(settlement.errorCode, "settlement_failed");
+  assert.equal(settlement.errorReason, "Settlement transaction reverted.");
+});
+
 test("self-hosted facilitator enforces and settles exact Base protocol-fee split", async () => {
   const mock = createMockClients();
   const buyerAddress = privateKeyToAccount(BUYER_PRIVATE_KEY).address;
