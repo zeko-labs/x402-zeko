@@ -18,6 +18,7 @@ import {
   buildEthereumMainnetUsdcExactEip3009Intent,
   buildEthereumUsdcReserveReleaseIntent,
   buildEthereumMainnetUsdcRail,
+  buildHostedFacilitatorRequest,
   buildPaymentPayload,
   buildPaymentRequired,
   buildSignedEvmAuthorization,
@@ -1274,6 +1275,52 @@ test("self-hosted facilitator rejects tampered hosted fee split settlement terms
   );
 });
 
+test("self-hosted facilitator rejects tampered reserve-release escrow terms", async () => {
+  const mock = createMockClients();
+  const rail = buildBaseMainnetUsdcReserveReleaseRail({
+    payTo: "0x000000000000000000000000000000000000bEEF",
+    amount: "0.50",
+    escrowContract: "0x9999999999999999999999999999999999999999"
+  });
+  const intent = buildBaseUsdcReserveReleaseIntent({
+    from: privateKeyToAccount(BUYER_PRIVATE_KEY).address,
+    payTo: rail.payTo,
+    escrowContract: "0x9999999999999999999999999999999999999999",
+    requestId: "req_self_hosted_escrow_tamper",
+    paymentId: "pay_self_hosted_escrow_tamper",
+    amount: rail.amount,
+    resultDigest: "proof_result_digest_escrow_tamper"
+  });
+  const { requirements, payload } = await buildSignedPayment({
+    rail,
+    intent,
+    paymentId: "pay_self_hosted_escrow_tamper"
+  });
+
+  payload.authorization.settlement.contractAddress = "0x000000000000000000000000000000000000dEaD";
+
+  const facilitator = new SelfHostedEvmFacilitator({
+    networks: [
+      {
+        networkId: "eip155:8453",
+        rpcUrl: "https://base.example",
+        relayerPrivateKey: RELAYER_PRIVATE_KEY,
+        publicClient: mock.publicClient,
+        walletClient: mock.walletClient
+      }
+    ]
+  });
+
+  await assert.rejects(
+    () =>
+      facilitator.settle({
+        paymentPayload: payload,
+        paymentRequirements: requirements
+      }),
+    /paymentPayload\.payload\.settlement\.contractAddress must match/
+  );
+});
+
 test("self-hosted facilitator surfaces decoded escrow custom errors on settlement failure", async () => {
   const mock = createMockClients();
   mock.walletClient.writeContract = async () => {
@@ -1484,6 +1531,16 @@ test("self-hosted facilitator HTTP server exposes supported, verify, and settle 
       body: JSON.stringify({ paymentPayload: requirements, paymentRequirements: requirements })
     });
     const invalidVerificationBody = await invalidVerification.json();
+    const internalHostedRequest = buildHostedFacilitatorRequest({
+      paymentPayload: payload,
+      paymentRequirements: requirements
+    });
+    const internalHostedVerification = await fetch(`${baseUrl}/verify`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(internalHostedRequest)
+    });
+    const internalHostedVerificationBody = await internalHostedVerification.json();
 
     assert.equal(supported.ok, true);
     assert.equal(supported.networks[0].networkId, "eip155:8453");
@@ -1493,7 +1550,10 @@ test("self-hosted facilitator HTTP server exposes supported, verify, and settle 
     assert.equal(settlement.success, true);
     assert.equal(invalidVerification.status, 400);
     assert.equal(invalidVerificationBody.errorCode, "invalid_request");
-    assert.match(invalidVerificationBody.error, /paymentPayload\.accepted\.asset|networkId|settlementRail/);
+    assert.match(invalidVerificationBody.error, /does not match any advertised payment requirement|paymentPayload\.accepted\.asset|networkId|settlementRail/);
+    assert.equal(internalHostedVerification.status, 400);
+    assert.equal(internalHostedVerificationBody.errorCode, "invalid_request");
+    assert.match(internalHostedVerificationBody.error, /external x402 payment payload shape/);
   } finally {
     server.close();
   }

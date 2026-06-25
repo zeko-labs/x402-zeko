@@ -2157,7 +2157,7 @@ function facilitatorHttpErrorStatus(error) {
   }
   const message = error instanceof Error ? error.message : String(error);
   if (
-    /is required|must be|requires|does not match|unsupported|unknown network|fee split|paymentPayload|paymentRequirements|authorization|signature|typedData|accepted\.|payload\.|asset\.|scheme=|networkId|payTo|payer|token address|amount string|base-10 integer|invalid_request|invalid amount|invalid atomic amount|invalid asset decimals|invalid address|invalid payment|invalid authorization|invalid signature/i.test(
+    /is required|must be|requires|does not match|unsupported|unknown network|fee split|paymentPayload|paymentRequirements|Public facilitator requests|authorization|signature|typedData|accepted\.|payload\.|asset\.|scheme=|networkId|payTo|payer|token address|amount string|base-10 integer|invalid_request|invalid amount|invalid atomic amount|invalid asset decimals|invalid address|invalid payment|invalid authorization|invalid signature/i.test(
       message
     )
   ) {
@@ -2278,6 +2278,18 @@ export class SelfHostedEvmFacilitator {
   }
 }
 
+function assertPublicFacilitatorRequest(input) {
+  if (!isRecord(input?.paymentPayload) || !isRecord(input?.paymentRequirements)) {
+    throw new Error("Public facilitator requests must include paymentPayload and paymentRequirements.");
+  }
+  if (isRecord(input.paymentPayload.accepted) || isRecord(input.paymentPayload.payload)) {
+    throw new Error("Public facilitator requests must use the external x402 payment payload shape.");
+  }
+  if (!Array.isArray(input.paymentRequirements.accepts)) {
+    throw new Error("Public facilitator requests must include the advertised paymentRequirements.accepts array.");
+  }
+}
+
 export function createSelfHostedEvmFacilitatorHttpServer(input = {}) {
   const facilitator =
     input.facilitator instanceof SelfHostedEvmFacilitator
@@ -2315,12 +2327,14 @@ export function createSelfHostedEvmFacilitatorHttpServer(input = {}) {
 
       if (request.method === "POST" && url.pathname === "/verify") {
         const body = await readJsonBody(request);
+        assertPublicFacilitatorRequest(body);
         sendJson(response, 200, await facilitator.verify(body));
         return;
       }
 
       if (request.method === "POST" && url.pathname === "/settle") {
         const body = await readJsonBody(request);
+        assertPublicFacilitatorRequest(body);
         sendJson(response, 200, await facilitator.settle(body));
         return;
       }
