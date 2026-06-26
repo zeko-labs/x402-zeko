@@ -15,6 +15,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { base, baseSepolia, mainnet } from "viem/chains";
 
 import { buildHostedFacilitatorRequest } from "./facilitator-client.js";
+import { stableStringify } from "./digest.js";
 
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -2282,9 +2283,20 @@ function assertPublicFacilitatorRequest(input) {
   if (!isRecord(input?.paymentPayload) || !isRecord(input?.paymentRequirements)) {
     throw new Error("Public facilitator requests must include paymentPayload and paymentRequirements.");
   }
-  if (isRecord(input.paymentPayload.accepted) || isRecord(input.paymentPayload.payload)) {
-    throw new Error("Public facilitator requests must use the external x402 payment payload shape.");
+
+  const isHostedWireRequest =
+    isRecord(input.paymentPayload.accepted) && isRecord(input.paymentPayload.payload);
+
+  if (isHostedWireRequest) {
+    if (Array.isArray(input.paymentRequirements.accepts)) {
+      throw new Error("Hosted facilitator requests must pass paymentRequirements as paymentPayload.accepted.");
+    }
+    if (stableStringify(input.paymentPayload.accepted) !== stableStringify(input.paymentRequirements)) {
+      throw new Error("Hosted facilitator request paymentRequirements must match paymentPayload.accepted.");
+    }
+    return;
   }
+
   if (!Array.isArray(input.paymentRequirements.accepts)) {
     throw new Error("Public facilitator requests must include the advertised paymentRequirements.accepts array.");
   }

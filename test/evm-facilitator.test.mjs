@@ -1531,16 +1531,36 @@ test("self-hosted facilitator HTTP server exposes supported, verify, and settle 
       body: JSON.stringify({ paymentPayload: requirements, paymentRequirements: requirements })
     });
     const invalidVerificationBody = await invalidVerification.json();
-    const internalHostedRequest = buildHostedFacilitatorRequest({
+    const hostedWireRequest = buildHostedFacilitatorRequest({
       paymentPayload: payload,
       paymentRequirements: requirements
     });
-    const internalHostedVerification = await fetch(`${baseUrl}/verify`, {
+    const hostedWireVerification = await fetch(`${baseUrl}/verify`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(internalHostedRequest)
+      body: JSON.stringify(hostedWireRequest)
     });
-    const internalHostedVerificationBody = await internalHostedVerification.json();
+    const hostedWireVerificationBody = await hostedWireVerification.json();
+    const tamperedHostedWireRequest = JSON.parse(JSON.stringify(hostedWireRequest));
+    tamperedHostedWireRequest.paymentRequirements = {
+      ...tamperedHostedWireRequest.paymentRequirements,
+      amount: "999999"
+    };
+    const tamperedHostedWireVerification = await fetch(`${baseUrl}/verify`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(tamperedHostedWireRequest)
+    });
+    const tamperedHostedWireVerificationBody = await tamperedHostedWireVerification.json();
+    const hybridHostedWireVerification = await fetch(`${baseUrl}/verify`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        paymentPayload: hostedWireRequest.paymentPayload,
+        paymentRequirements: requirements
+      })
+    });
+    const hybridHostedWireVerificationBody = await hybridHostedWireVerification.json();
 
     assert.equal(supported.ok, true);
     assert.equal(supported.networks[0].networkId, "eip155:8453");
@@ -1551,9 +1571,14 @@ test("self-hosted facilitator HTTP server exposes supported, verify, and settle 
     assert.equal(invalidVerification.status, 400);
     assert.equal(invalidVerificationBody.errorCode, "invalid_request");
     assert.match(invalidVerificationBody.error, /does not match any advertised payment requirement|paymentPayload\.accepted\.asset|networkId|settlementRail/);
-    assert.equal(internalHostedVerification.status, 400);
-    assert.equal(internalHostedVerificationBody.errorCode, "invalid_request");
-    assert.match(internalHostedVerificationBody.error, /external x402 payment payload shape/);
+    assert.equal(hostedWireVerification.status, 200);
+    assert.equal(hostedWireVerificationBody.isValid, true);
+    assert.equal(tamperedHostedWireVerification.status, 400);
+    assert.equal(tamperedHostedWireVerificationBody.errorCode, "invalid_request");
+    assert.match(tamperedHostedWireVerificationBody.error, /paymentRequirements must match paymentPayload\.accepted/);
+    assert.equal(hybridHostedWireVerification.status, 400);
+    assert.equal(hybridHostedWireVerificationBody.errorCode, "invalid_request");
+    assert.match(hybridHostedWireVerificationBody.error, /paymentRequirements as paymentPayload\.accepted/);
   } finally {
     server.close();
   }
