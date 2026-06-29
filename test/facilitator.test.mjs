@@ -11,6 +11,7 @@ import {
   HTTPFacilitatorClient,
   InMemorySettlementLedger,
   X402_SETTLEMENT_METHOD,
+  ZEKO_MAINNET_NETWORK,
   assertPaymentPayload,
   buildAuthorizationDigest,
   buildCircleGatewayBaseUsdcRail,
@@ -95,6 +96,44 @@ test("builds multi-rail Zeko and EVM payment options for one resource", () => {
   assert.equal(zekoOption.extensions.zeko.primitive, "zeko-exact-settlement-zkapp-v1");
   assert.equal(evmOption.network, "eip155:8453");
   assert.equal(evmOption.asset.symbol, "USDC");
+});
+
+test("builds Zeko mainnet settlement rails and intents", () => {
+  const rail = buildZekoSettlementContractRail({
+    network: "mainnet",
+    contractAddress: "B62qcontract11111111111111111111111111111111111111111111111111111",
+    beneficiaryAddress: "B62qbeneficiary1111111111111111111111111111111111111111111111111",
+    amount: "0.015",
+    bundleDigestSha256: "proof_bundle_digest_demo"
+  });
+  const intent = buildZekoExactSettlementIntent({
+    network: "mainnet",
+    contractAddress: rail.payTo,
+    beneficiaryAddress: rail.extensions.zeko.beneficiaryAddress,
+    payerAddress: "B62qpayer1111111111111111111111111111111111111111111111111111111",
+    requestId: "req_zeko_mainnet_demo",
+    paymentId: "pay_zeko_mainnet_demo",
+    paymentContextDigest: "a".repeat(64),
+    amountMina: rail.amount
+  });
+  const catalog = buildCatalog({
+    serviceId: "zeko-mainnet-service",
+    baseUrl: "https://payments.example",
+    proofBundleUrl: "https://payments.example/api/proof",
+    verifyUrl: "https://payments.example/api/proof/verify",
+    sessionId: "session_mainnet",
+    rails: [rail]
+  });
+
+  assert.equal(ZEKO_MAINNET_NETWORK.networkId, "zeko:zeko-mainnet");
+  assert.equal(catalog.resource.serviceNetworkId, "zeko:zeko-mainnet");
+  assert.equal(rail.network, "zeko:zeko-mainnet");
+  assert.equal(rail.asset.symbol, "MINA");
+  assert.equal(rail.extensions.zeko.graphql, "https://mainnet.zeko.io/graphql");
+  assert.equal(rail.extensions.zeko.archive, "https://archive.mainnet.zeko.io/graphql");
+  assert.equal(intent.network.networkId, "zeko:zeko-mainnet");
+  assert.equal(intent.network.graphql, "https://mainnet.zeko.io/graphql");
+  assert.equal(intent.accountUpdates[0].asset.symbol, "MINA");
 });
 
 test("verifies and settles either Zeko-native or EVM payments", () => {

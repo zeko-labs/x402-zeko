@@ -19,7 +19,8 @@ Behavior:
 - If `X402_INCLUDE_ETHEREUM=true`, Ethereum mainnet is added, using `X402_ETHEREUM_PAY_TO`, `X402_EVM_PAY_TO`, or falling back to the Base `payTo`.
 - If `X402_BASE_PAY_TO` or `X402_EVM_PAY_TO` is present, Base is added too.
 - If `X402_ZKAPP_PUBLIC_KEY` is present, the script adds the Zeko zkApp rail.
-- If the Zeko beneficiary is not provided explicitly, the script reads it from the deployed settlement contract on Zeko testnet.
+- If the Zeko beneficiary is not provided explicitly, the script reads it from the deployed settlement contract on the selected Zeko network.
+- Set `X402_ZEKO_NETWORK=mainnet` to advertise a Zeko mainnet settlement zkApp instead of the default testnet rail.
 
 This keeps the front door boring and compatible:
 

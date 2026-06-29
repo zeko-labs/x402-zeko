@@ -10,9 +10,9 @@ import {
   buildEthereumMainnetUsdcRail,
   buildPaymentRequired,
   buildZekoSettlementContractRail,
-  encodeBase64Json
+  encodeBase64Json,
+  resolveZekoNetwork
 } from "../src/index.js";
-import { ZEKO_TESTNET_NETWORK } from "../src/targets.js";
 
 function readOptionalEnv(name, fallback = "") {
   const value = process.env[name];
@@ -51,8 +51,12 @@ function resolveEthereumPayTo(basePayTo) {
 }
 
 async function resolveZekoBeneficiary(zkappPublicKeyBase58) {
-  const graphql = readOptionalEnv("ZEKO_GRAPHQL", ZEKO_TESTNET_NETWORK.graphql);
-  const archive = readOptionalEnv("ZEKO_ARCHIVE", ZEKO_TESTNET_NETWORK.archive);
+  const zekoNetwork = resolveZekoNetwork({
+    network: readOptionalEnv("X402_ZEKO_NETWORK"),
+    networkId: readOptionalEnv("X402_ZEKO_NETWORK_ID")
+  });
+  const graphql = readOptionalEnv("ZEKO_GRAPHQL", zekoNetwork.graphql);
+  const archive = readOptionalEnv("ZEKO_ARCHIVE", zekoNetwork.archive);
   const explicitBeneficiary =
     readOptionalEnv("X402_ZEKO_BENEFICIARY_PUBLIC_KEY") ||
     readOptionalEnv("X402_BENEFICIARY_PUBLIC_KEY");
@@ -61,13 +65,14 @@ async function resolveZekoBeneficiary(zkappPublicKeyBase58) {
     return {
       beneficiary: explicitBeneficiary,
       graphql,
-      archive
+      archive,
+      zekoNetwork
     };
   }
 
   Mina.setActiveInstance(
     Mina.Network({
-      networkId: ZEKO_TESTNET_NETWORK.o1jsNetworkId,
+      networkId: zekoNetwork.o1jsNetworkId,
       mina: graphql,
       archive
     })
@@ -84,7 +89,8 @@ async function resolveZekoBeneficiary(zkappPublicKeyBase58) {
   return {
     beneficiary: zkapp.beneficiary.get().toBase58(),
     graphql,
-    archive
+    archive,
+    zekoNetwork
   };
 }
 
@@ -128,13 +134,15 @@ async function main() {
 
   const zekoZkapp = readOptionalEnv("X402_ZKAPP_PUBLIC_KEY");
   if (zekoZkapp && !isExplicitlyFalse(readOptionalEnv("X402_INCLUDE_ZEKO", "true"))) {
-    const { beneficiary, graphql, archive } = await resolveZekoBeneficiary(zekoZkapp);
+    const { beneficiary, graphql, archive, zekoNetwork } = await resolveZekoBeneficiary(zekoZkapp);
     rails.push(
       buildZekoSettlementContractRail({
+        networkId: zekoNetwork.networkId,
         contractAddress: zekoZkapp,
         beneficiaryAddress: beneficiary,
         graphql,
         archive,
+        explorer: zekoNetwork.explorer,
         amount: readOptionalEnv("X402_ZEKO_AMOUNT_MINA", "0.015"),
         description: "Zeko zkApp settlement rail for verified-result and privacy-forward payment flows."
       })

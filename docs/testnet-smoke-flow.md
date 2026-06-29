@@ -14,6 +14,8 @@ It exercises the intended happy path:
 
 ## Required env
 
+- `X402_ZEKO_NETWORK`
+  Default: `testnet`; set `mainnet` to use `zeko:zeko-mainnet`.
 - `ZEKO_GRAPHQL`
   Default: `https://testnet.zeko.io/graphql`
 - `ZEKO_ARCHIVE`
@@ -28,9 +30,9 @@ It exercises the intended happy path:
 - `X402_SETTLEMENT_STATE_PATH`
   Default local witness file when `X402_WITNESS_SERVICE_URL` is unset.
 - `X402_AMOUNT_MINA`
-  Default: `0.015` `tMINA`
+  Default: `0.015` `tMINA` on testnet or `MINA` on mainnet
 - `X402_FEE_MINA`
-  Default: `0.10` `tMINA`
+  Default: `0.10` `tMINA` on testnet or `MINA` on mainnet
 - `X402_SERVICE_ID`, `X402_SESSION_ID`, `X402_TURN_ID`, `X402_PAYMENT_ID`
 - `X402_BASE_URL`, `X402_PROOF_BUNDLE_URL`, `X402_VERIFY_URL`
 - `X402_WAIT_ATTEMPTS`, `X402_WAIT_INTERVAL_MS`
@@ -39,8 +41,20 @@ It exercises the intended happy path:
 
 1. Deploy and configure the settlement contract.
 2. Start `pnpm witness:serve` or point `X402_WITNESS_SERVICE_URL` at your own witness service.
-3. Export `X402_ZKAPP_PUBLIC_KEY` plus a payer private key with testnet `tMINA`.
+3. Export `X402_ZKAPP_PUBLIC_KEY` plus a payer private key funded on the selected Zeko network.
 4. Run `pnpm smoke:zeko-flow`.
+
+## Mainnet
+
+For Zeko mainnet:
+
+```bash
+export X402_ZEKO_NETWORK=mainnet
+export ZEKO_GRAPHQL=https://mainnet.zeko.io/graphql
+export ZEKO_ARCHIVE=https://archive.mainnet.zeko.io/graphql
+```
+
+Only run the live smoke after deploying a mainnet settlement zkApp, funding the payer with mainnet MINA, and pointing `X402_SETTLEMENT_STATE_PATH` or `X402_WITNESS_SERVICE_URL` at the witness state for that exact deployed contract.
 
 The script prints JSON containing:
 

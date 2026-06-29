@@ -7,8 +7,8 @@ import {
   BASE_MAINNET_USDC,
   ETHEREUM_MAINNET_USDC,
   MAX_RESERVE_RELEASE_PROTOCOL_FEE_BPS,
-  ZEKO_TESTNET_NETWORK,
-  buildCustomEvmTokenTarget
+  buildCustomEvmTokenTarget,
+  resolveZekoNetwork
 } from "./targets.js";
 
 function shortId(value) {
@@ -81,7 +81,8 @@ export function buildZekoExactSettlementIntent(input) {
     throw new Error("paymentId is required.");
   }
 
-  const networkId = input.networkId ?? ZEKO_TESTNET_NETWORK.networkId;
+  const zekoNetwork = resolveZekoNetwork(input);
+  const networkId = input.networkId ?? zekoNetwork.networkId;
   const assetSymbol = input.assetSymbol ?? defaultZekoAssetSymbol(networkId);
   const paymentContextDigest = input?.paymentContextDigest ?? input?.authorizationDigest;
 
@@ -107,9 +108,9 @@ export function buildZekoExactSettlementIntent(input) {
     settlementRail: "zeko",
     network: {
       networkId,
-      o1jsNetworkId: input.o1jsNetworkId ?? ZEKO_TESTNET_NETWORK.o1jsNetworkId,
-      graphql: input.graphql ?? ZEKO_TESTNET_NETWORK.graphql,
-      archive: input.archive ?? ZEKO_TESTNET_NETWORK.archive
+      o1jsNetworkId: input.o1jsNetworkId ?? zekoNetwork.o1jsNetworkId,
+      graphql: input.graphql ?? zekoNetwork.graphql,
+      archive: input.archive ?? zekoNetwork.archive
     },
     transaction: {
       builder: "o1js",
@@ -182,17 +183,18 @@ export function buildZekoNativeTransferFallbackIntent(input) {
   const amountMina = input.amountMina ?? "0.015";
   const feeMina = input.feeMina ?? "0.10";
 
-  const networkId = input.networkId ?? ZEKO_TESTNET_NETWORK.networkId;
+  const zekoNetwork = resolveZekoNetwork(input);
+  const networkId = input.networkId ?? zekoNetwork.networkId;
 
   return {
     primitive: "zeko-native-payment-v1",
     settlementRail: "zeko",
     network: {
       networkId,
-      graphql: input.graphql ?? ZEKO_TESTNET_NETWORK.graphql
+      graphql: input.graphql ?? zekoNetwork.graphql
     },
     graphql: {
-      endpoint: input.graphql ?? ZEKO_TESTNET_NETWORK.graphql,
+      endpoint: input.graphql ?? zekoNetwork.graphql,
       operationName: "SendPayment",
       query:
         "mutation SendPayment($input: SendPaymentInput!, $signature: SignatureInput) { sendPayment(input: $input, signature: $signature) { payment { hash amount fee from to nonce } } }",

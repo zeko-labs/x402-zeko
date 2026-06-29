@@ -225,6 +225,9 @@ export function buildPaymentRequired(input) {
 export function buildCatalog(input) {
   const descriptor = buildServiceDescriptor(input);
   const requirements = buildPaymentRequired(input);
+  const zekoRail = Array.isArray(input.rails)
+    ? input.rails.find((rail) => rail?.settlementRail === "zeko")
+    : null;
 
   return {
     protocol: "x402",
@@ -233,7 +236,7 @@ export function buildCatalog(input) {
     serviceId: input.serviceId,
     resource: {
       chain: "zeko-service",
-      serviceNetworkId: input.serviceNetworkId ?? "zeko:testnet"
+      serviceNetworkId: input.serviceNetworkId ?? zekoRail?.network ?? "zeko:testnet"
     },
     facilitator: {
       mode: "multi-rail",
