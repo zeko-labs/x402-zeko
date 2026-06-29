@@ -61,6 +61,8 @@ pnpm smoke:ethereum-sepolia-reserve-release
 
 ### 3. Run the Zeko path
 
+Testnet is the default. For Zeko mainnet, set `X402_ZEKO_NETWORK=mainnet` and point `ZEKO_GRAPHQL` / `ZEKO_ARCHIVE` at the mainnet endpoints documented in [`docs/zeko-mainnet-deployment.md`](docs/zeko-mainnet-deployment.md).
+
 ```bash
 pnpm build:zkapp
 pnpm smoke:zeko-flow
@@ -97,6 +99,7 @@ pnpm doctor:rails
 
 - [EVM hosted and self-hosted flows](/Users/evankereiakes/Documents/Codex/zeko-x402/docs/evm-hosted-facilitators.md)
 - [Reserve-release v2/v3/v4](/Users/evankereiakes/Documents/Codex/zeko-x402/docs/evm-reserve-release-v2.md)
+- [Zeko mainnet deployment](docs/zeko-mainnet-deployment.md)
 - [Multi-rail paid resource](/Users/evankereiakes/Documents/Codex/zeko-x402/docs/multirail-paid-resource.md)
 - [Adapter architecture](/Users/evankereiakes/Documents/Codex/zeko-x402/docs/adapter-architecture.md)
 - [Tenant onboarding](/Users/evankereiakes/Documents/Codex/zeko-x402/docs/tenant-onboarding.md)

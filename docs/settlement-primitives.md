@@ -9,7 +9,7 @@ Canonical primitive: `zeko-exact-settlement-zkapp-v1`
 This is the Zeko-native settlement primitive we want to trigger once we wire the rail into a live client:
 
 - build an `o1js` transaction against a Zeko custom network
-- include a signed `tMINA` transfer from payer into a settlement contract on Zeko testnet
+- include a signed native MINA transfer from payer into a settlement contract on Zeko
 - include a zkApp method call such as `settleExact(...)`
 - bind the transaction to a stable `paymentContextDigest`
 - emit an onchain event keyed by `paymentId` for replay protection and proof binding
@@ -25,6 +25,7 @@ This exists only as a compatibility path. It uses the public GraphQL `sendPaymen
 Current default asset conventions in `zeko-x402`:
 
 - Zeko testnet: `tMINA`
+- Zeko mainnet: `MINA`
 - Base mainnet: canonical USDC
 - Ethereum mainnet: canonical USDC
 

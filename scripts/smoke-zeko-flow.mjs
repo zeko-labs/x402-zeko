@@ -12,7 +12,6 @@ import {
   X402_PAYMENT_REQUIRED_HEADER,
   X402_PAYMENT_RESPONSE_HEADER,
   X402_PAYMENT_SIGNATURE_HEADER,
-  ZEKO_TESTNET_NETWORK,
   computeSettlementStoreRoot,
   buildCatalog,
   buildDefaultSettlementApplierInput,
@@ -25,6 +24,7 @@ import {
   encodeBase64Json,
   prepareX402SettlementContractCall,
   readSettlementStore,
+  resolveZekoNetwork,
   recordSettlementWitnessUpdate,
   submitZekoAuthorization,
   verifyPayment,
@@ -169,8 +169,12 @@ async function readWitnessRootInfo(input) {
 }
 
 async function main() {
-  const graphql = readOptionalEnv("ZEKO_GRAPHQL", ZEKO_TESTNET_NETWORK.graphql);
-  const archive = readOptionalEnv("ZEKO_ARCHIVE", ZEKO_TESTNET_NETWORK.archive);
+  const zekoNetwork = resolveZekoNetwork({
+    network: readOptionalEnv("X402_ZEKO_NETWORK"),
+    networkId: readOptionalEnv("X402_ZEKO_NETWORK_ID")
+  });
+  const graphql = readOptionalEnv("ZEKO_GRAPHQL", zekoNetwork.graphql);
+  const archive = readOptionalEnv("ZEKO_ARCHIVE", zekoNetwork.archive);
   const payerPrivateKeyBase58 = requireOneOfEnv([
     "X402_PAYER_PRIVATE_KEY",
     "DEPLOYER_PRIVATE_KEY",
@@ -250,6 +254,7 @@ async function main() {
   await X402SettlementContract.compile();
 
   const rail = buildZekoSettlementContractRail({
+    networkId: zekoNetwork.networkId,
     contractAddress: zkappAddress.toBase58(),
     beneficiaryAddress: beneficiary.toBase58(),
     graphql,
@@ -284,6 +289,10 @@ async function main() {
     turnId
   });
   const intent = buildZekoExactSettlementIntent({
+    networkId: zekoNetwork.networkId,
+    o1jsNetworkId: zekoNetwork.o1jsNetworkId,
+    graphql,
+    archive,
     contractAddress: zkappAddress.toBase58(),
     beneficiaryAddress: beneficiary.toBase58(),
     payerAddress: payerAddress.toBase58(),
@@ -449,7 +458,7 @@ async function main() {
         network: {
           graphql,
           archive,
-          explorer: ZEKO_TESTNET_NETWORK.explorer
+          explorer: zekoNetwork.explorer
         },
         contract: {
           zkappAddress: zkappAddress.toBase58(),

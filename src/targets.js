@@ -10,6 +10,49 @@ export const ZEKO_TESTNET_NETWORK = Object.freeze({
   explorer: "https://zekoscan.io/testnet"
 });
 
+export const ZEKO_MAINNET_NETWORK = Object.freeze({
+  networkId: "zeko:zeko-mainnet",
+  o1jsNetworkId: "zeko",
+  graphql: "https://mainnet.zeko.io/graphql",
+  archive: "https://archive.mainnet.zeko.io/graphql",
+  explorer: "https://zekoscan.io/mainnet"
+});
+
+export function resolveZekoNetwork(input = {}) {
+  const requested = String(
+    input.network ??
+      input.networkName ??
+      input.zekoNetwork ??
+      input.networkId ??
+      ""
+  ).toLowerCase();
+
+  if (
+    requested === "mainnet" ||
+    requested === "zeko-mainnet" ||
+    requested === ZEKO_MAINNET_NETWORK.networkId
+  ) {
+    return ZEKO_MAINNET_NETWORK;
+  }
+
+  if (
+    requested === "" ||
+    requested === "testnet" ||
+    requested === "zeko-testnet" ||
+    requested === ZEKO_TESTNET_NETWORK.networkId
+  ) {
+    return ZEKO_TESTNET_NETWORK;
+  }
+
+  return Object.freeze({
+    networkId: input.networkId ?? requested,
+    o1jsNetworkId: input.o1jsNetworkId ?? ZEKO_TESTNET_NETWORK.o1jsNetworkId,
+    graphql: input.graphql ?? ZEKO_TESTNET_NETWORK.graphql,
+    archive: input.archive ?? input.graphql ?? ZEKO_TESTNET_NETWORK.archive,
+    explorer: input.explorer ?? ZEKO_TESTNET_NETWORK.explorer
+  });
+}
+
 export const BASE_MAINNET_USDC = Object.freeze({
   networkId: "eip155:8453",
   chainId: 8453,
@@ -272,7 +315,8 @@ export function buildZekoSettlementContractRail(input) {
     throw new Error("beneficiaryAddress is required for the Zeko settlement contract rail.");
   }
 
-  const networkId = input.networkId ?? ZEKO_TESTNET_NETWORK.networkId;
+  const zekoNetwork = resolveZekoNetwork(input);
+  const networkId = input.networkId ?? zekoNetwork.networkId;
   const assetSymbol = input.assetSymbol ?? defaultZekoAssetSymbol(networkId);
 
   return buildZekoRail({
@@ -295,9 +339,9 @@ export function buildZekoSettlementContractRail(input) {
         primitive: "zeko-exact-settlement-zkapp-v1",
         contractAddress: input.contractAddress,
         beneficiaryAddress: input.beneficiaryAddress,
-        graphql: input.graphql ?? ZEKO_TESTNET_NETWORK.graphql,
-        archive: input.archive ?? ZEKO_TESTNET_NETWORK.archive,
-        explorer: input.explorer ?? ZEKO_TESTNET_NETWORK.explorer
+        graphql: input.graphql ?? zekoNetwork.graphql,
+        archive: input.archive ?? zekoNetwork.archive,
+        explorer: input.explorer ?? zekoNetwork.explorer
       }
     }
   });

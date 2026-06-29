@@ -6,9 +6,9 @@ import { privateKeyToAccount } from "viem/accounts";
 
 import { X402SettlementContract } from "../dist-zkapp/contracts/X402SettlementContract.js";
 import {
-  ZEKO_TESTNET_NETWORK,
   computeSettlementStoreRoot,
-  readSettlementStore
+  readSettlementStore,
+  resolveZekoNetwork
 } from "../src/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -366,8 +366,12 @@ async function fetchSettlementEvents(archiveUrl, address) {
 }
 
 async function inspectZeko() {
-  const graphql = readOptionalEnv("ZEKO_GRAPHQL", ZEKO_TESTNET_NETWORK.graphql);
-  const archive = readOptionalEnv("ZEKO_ARCHIVE", ZEKO_TESTNET_NETWORK.archive);
+  const zekoNetwork = resolveZekoNetwork({
+    network: readOptionalEnv("X402_ZEKO_NETWORK"),
+    networkId: readOptionalEnv("X402_ZEKO_NETWORK_ID")
+  });
+  const graphql = readOptionalEnv("ZEKO_GRAPHQL", zekoNetwork.graphql);
+  const archive = readOptionalEnv("ZEKO_ARCHIVE", zekoNetwork.archive);
   const payerKey = readFirstEnv([
     "X402_PAYER_PRIVATE_KEY",
     "DEPLOYER_PRIVATE_KEY",
@@ -489,8 +493,10 @@ async function inspectZeko() {
 
   return {
     ready,
+    networkId: zekoNetwork.networkId,
     graphql,
     archive,
+    explorer: zekoNetwork.explorer,
     payerKeySource: payerKey?.name ?? null,
     payerAddress,
     witnessSource: witness?.source ?? (witnessServiceUrl ? "http" : "file"),
