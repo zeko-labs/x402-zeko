@@ -105,3 +105,30 @@ pnpm doctor:rails
 - [Tenant onboarding](/Users/evankereiakes/Documents/Codex/zeko-x402/docs/tenant-onboarding.md)
 - [Tempo and Arc payout options](/Users/evankereiakes/Documents/Codex/zeko-x402/docs/tempo-arc-payout-options.md)
 - [OpenClaw app handoff](/Users/evankereiakes/Documents/Codex/zeko-x402/docs/openclaw-agent-handoff.md)
+
+## Licensing And Commercial Terms
+
+ZK x402 for Zeko is part of the Zeko Agent Bundle. Protected
+product/protocol-layer code is licensed under BUSL-1.1 with the Zeko Additional
+Use Grant. Adoption-layer materials may be Apache-2.0 or MIT where expressly
+marked.
+
+The current Change Date is 2030-07-17, and the Change License is Apache
+License, Version 2.0. Non-production/testnet use is free under the Additional
+Use Grant. Production Agent Bundle deployments require the self-serve
+commercial deployment license unless an Additional Free Use applies.
+
+Standard self-serve pricing is published in [PRICING.md](./PRICING.md):
+
+- Protocol Layer Production Deployments: $1,000/year per production rollup for
+  1-10 production rollups; 11+ production rollups use custom pricing.
+- Agent Bundle Production Deployments: $1,000/year per deploying legal entity
+  per Deployment Network.
+
+The self-serve commercial deployment license covers license rights only.
+Managed deployment, enterprise support, compliance review, SLAs, custom
+integrations, and dedicated infrastructure are separate commercial services.
+
+See [LICENSING.md](./LICENSING.md), [LICENSE](./LICENSE),
+[LICENSES/ZEKO-ADDITIONAL-USE-GRANT.md](./LICENSES/ZEKO-ADDITIONAL-USE-GRANT.md),
+[COMMERCIAL-TERMS.md](./COMMERCIAL-TERMS.md), and [PRICING.md](./PRICING.md).
