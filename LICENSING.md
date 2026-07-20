@@ -1,8 +1,8 @@
 # Licensing
 
-This repository is part of the Zeko Agent Bundle.
+This repository is part of the Zeko Agent Protocol Bundle.
 
-Protected Agent Bundle implementation code is licensed under BUSL-1.1 with the
+Protected Agent Protocol Bundle implementation code is licensed under BUSL-1.1 with the
 Zeko Additional Use Grant. The current Change Date is 2030-07-17, and the
 Change License is Apache License, Version 2.0.
 
