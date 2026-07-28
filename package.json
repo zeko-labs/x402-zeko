@@ -2,7 +2,7 @@
   "name": "zeko-x402",
   "version": "0.1.0",
   "description": "Multi-rail x402 settlement toolkit for Zeko, Ethereum, and Base.",
-  "license": "Apache-2.0",
+  "license": "BUSL-1.1",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/zeko-labs/x402-zeko.git"
