@@ -5,6 +5,7 @@ import { Mina, PublicKey, fetchAccount } from "o1js";
 import { X402SettlementContract } from "../dist-zkapp/contracts/X402SettlementContract.js";
 import {
   X402_PAYMENT_REQUIRED_HEADER,
+  assertActiveZekoEndpoint,
   buildBaseMainnetUsdcRail,
   buildCatalog,
   buildEthereumMainnetUsdcRail,
@@ -55,8 +56,8 @@ async function resolveZekoBeneficiary(zkappPublicKeyBase58) {
     network: readOptionalEnv("X402_ZEKO_NETWORK"),
     networkId: readOptionalEnv("X402_ZEKO_NETWORK_ID")
   });
-  const graphql = readOptionalEnv("ZEKO_GRAPHQL", zekoNetwork.graphql);
-  const archive = readOptionalEnv("ZEKO_ARCHIVE", zekoNetwork.archive);
+  const graphql = assertActiveZekoEndpoint(readOptionalEnv("ZEKO_GRAPHQL", zekoNetwork.graphql), "ZEKO_GRAPHQL");
+  const archive = assertActiveZekoEndpoint(readOptionalEnv("ZEKO_ARCHIVE", zekoNetwork.archive), "ZEKO_ARCHIVE");
   const explicitBeneficiary =
     readOptionalEnv("X402_ZEKO_BENEFICIARY_PUBLIC_KEY") ||
     readOptionalEnv("X402_BENEFICIARY_PUBLIC_KEY");
@@ -82,7 +83,9 @@ async function resolveZekoBeneficiary(zkappPublicKeyBase58) {
   const result = await fetchAccount({ publicKey: zkappAddress });
 
   if (result.error) {
-    throw new Error(`Unable to fetch Zeko settlement contract at ${zkappPublicKeyBase58}.`);
+    throw new Error(
+      `Unable to fetch Zeko settlement contract at ${zkappPublicKeyBase58}; verify ZEKO_GRAPHQL and Node network access.`
+    );
   }
 
   const zkapp = new X402SettlementContract(zkappAddress);
@@ -143,7 +146,7 @@ async function main() {
         graphql,
         archive,
         explorer: zekoNetwork.explorer,
-        amount: readOptionalEnv("X402_ZEKO_AMOUNT_MINA", "0.015"),
+        amount: readOptionalEnv("X402_ZEKO_AMOUNT_NATIVE", readOptionalEnv("X402_ZEKO_AMOUNT_MINA", "0.015")),
         description: "Zeko zkApp settlement rail for verified-result and privacy-forward payment flows."
       })
     );

@@ -25,7 +25,7 @@ export class X402ExactSettlementEvent extends Struct({
   paymentIdHash: Field,
   payer: PublicKey,
   beneficiary: PublicKey,
-  amountNanomina: UInt64,
+  amountNativeUnits: UInt64,
   paymentContextDigest: Field,
   resourceDigest: Field,
   settlementLeaf: Field,
@@ -78,7 +78,7 @@ export class X402SettlementContract extends SmartContract {
     paymentIdHash: Field,
     payer: PublicKey,
     beneficiary: PublicKey,
-    amountNanomina: UInt64,
+    amountNativeUnits: UInt64,
     paymentContextDigest: Field,
     resourceDigest: Field,
     paymentWitness: MerkleMapWitness
@@ -89,7 +89,7 @@ export class X402SettlementContract extends SmartContract {
 
     configuredBeneficiary.assertEquals(beneficiary);
     currentServiceCommitment.assertNotEquals(Field(0));
-    amountNanomina.assertGreaterThan(UInt64.zero);
+    amountNativeUnits.assertGreaterThan(UInt64.zero);
 
     const paymentKey = Poseidon.hash([requestIdHash, paymentIdHash]);
     const settlementLeaf = Poseidon.hash([
@@ -97,7 +97,7 @@ export class X402SettlementContract extends SmartContract {
       paymentIdHash,
       ...payer.toFields(),
       ...beneficiary.toFields(),
-      amountNanomina.value,
+      amountNativeUnits.value,
       paymentContextDigest,
       resourceDigest,
       currentServiceCommitment
@@ -109,7 +109,7 @@ export class X402SettlementContract extends SmartContract {
 
     const [nextRoot] = paymentWitness.computeRootAndKey(settlementLeaf);
     this.settlementRoot.set(nextRoot);
-    this.send({ to: beneficiary, amount: amountNanomina });
+    this.send({ to: beneficiary, amount: amountNativeUnits });
 
     this.emitEvent(
       'exactSettlement',
@@ -118,7 +118,7 @@ export class X402SettlementContract extends SmartContract {
         paymentIdHash,
         payer,
         beneficiary,
-        amountNanomina,
+        amountNativeUnits,
         paymentContextDigest,
         resourceDigest,
         settlementLeaf,

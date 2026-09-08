@@ -12,6 +12,7 @@ import {
   X402_PAYMENT_REQUIRED_HEADER,
   X402_PAYMENT_RESPONSE_HEADER,
   X402_PAYMENT_SIGNATURE_HEADER,
+  assertActiveZekoEndpoint,
   computeSettlementStoreRoot,
   buildCatalog,
   buildDefaultSettlementApplierInput,
@@ -22,6 +23,7 @@ import {
   buildZekoExactSettlementIntent,
   buildZekoSettlementContractRail,
   encodeBase64Json,
+  graphqlRequest,
   prepareX402SettlementContractCall,
   readSettlementStore,
   resolveZekoNetwork,
@@ -91,8 +93,43 @@ function readAccountNonce(result) {
   return null;
 }
 
+async function fetchAccountSummary(endpoint, publicKey) {
+  const publicKeyBase58 = typeof publicKey?.toBase58 === "function" ? publicKey.toBase58() : String(publicKey);
+  const data = await graphqlRequest({
+    endpoint,
+    query:
+      "query($pk: PublicKey!) { account(publicKey: $pk) { nonce inferredNonce zkappState } }",
+    variables: { pk: publicKeyBase58 }
+  });
+  const account = data?.account;
+
+  if (!account) {
+    return {
+      exists: false,
+      nonce: null,
+      settlementRoot: null
+    };
+  }
+
+  const nonceText = account.inferredNonce ?? account.nonce;
+  let nonce = null;
+
+  try {
+    nonce = nonceText !== null && nonceText !== undefined ? BigInt(nonceText) : null;
+  } catch {
+    nonce = null;
+  }
+
+  return {
+    exists: true,
+    nonce,
+    settlementRoot: Array.isArray(account.zkappState) ? account.zkappState[3] ?? null : null
+  };
+}
+
 async function waitForSettlementObservation(input) {
   const {
+    graphql,
     payerAddress,
     zkappAddress,
     initialPayerNonce,
@@ -102,17 +139,17 @@ async function waitForSettlementObservation(input) {
   } = input;
 
   for (let index = 0; index < attempts; index += 1) {
-    const payerAccount = await fetchAccount({ publicKey: payerAddress });
-    const zkappAccount = await fetchAccount({ publicKey: zkappAddress });
-    const payerNonce = readAccountNonce(payerAccount);
+    const [payerAccount, zkappAccount] = await Promise.all([
+      fetchAccountSummary(graphql, payerAddress),
+      fetchAccountSummary(graphql, zkappAddress)
+    ]);
+    const payerNonce = payerAccount.nonce;
 
-    if (!zkappAccount.error) {
-      const zkapp = new X402SettlementContract(zkappAddress);
-      const settlementRoot = zkapp.settlementRoot.get().toString();
-
+    if (zkappAccount.exists) {
+      const settlementRoot = zkappAccount.settlementRoot;
       if (
         (payerNonce !== null && initialPayerNonce !== null && payerNonce > initialPayerNonce) ||
-        settlementRoot !== initialSettlementRoot
+        (settlementRoot !== null && settlementRoot !== initialSettlementRoot)
       ) {
         return {
           accepted: true,
@@ -173,17 +210,17 @@ async function main() {
     network: readOptionalEnv("X402_ZEKO_NETWORK"),
     networkId: readOptionalEnv("X402_ZEKO_NETWORK_ID")
   });
-  const graphql = readOptionalEnv("ZEKO_GRAPHQL", zekoNetwork.graphql);
-  const archive = readOptionalEnv("ZEKO_ARCHIVE", zekoNetwork.archive);
+  const graphql = assertActiveZekoEndpoint(readOptionalEnv("ZEKO_GRAPHQL", zekoNetwork.graphql), "ZEKO_GRAPHQL");
+  const archive = assertActiveZekoEndpoint(readOptionalEnv("ZEKO_ARCHIVE", zekoNetwork.archive), "ZEKO_ARCHIVE");
   const payerPrivateKeyBase58 = requireOneOfEnv([
     "X402_PAYER_PRIVATE_KEY",
+    "X402_ZEKO_PRIVATE_KEY",
     "DEPLOYER_PRIVATE_KEY",
-    "MINA_PRIVATE_KEY",
     "WALLET_PRIVATE_KEY"
   ]);
   const zkappPublicKeyBase58 = requireEnv("X402_ZKAPP_PUBLIC_KEY");
-  const amountMina = readOptionalEnv("X402_AMOUNT_MINA", "0.015");
-  const feeMina = readOptionalEnv("X402_FEE_MINA", "0.10");
+  const amountNative = readOptionalEnv("X402_AMOUNT_NATIVE", readOptionalEnv("X402_AMOUNT_MINA", "0.015"));
+  const feeNative = readOptionalEnv("X402_FEE_NATIVE", readOptionalEnv("X402_FEE_MINA", "0.0002"));
   const serviceId = readOptionalEnv("X402_SERVICE_ID", "zeko-x402-smoke");
   const sessionId = readOptionalEnv("X402_SESSION_ID", createId("session"));
   const turnId = readOptionalEnv("X402_TURN_ID", createId("turn"));
@@ -208,6 +245,7 @@ async function main() {
 
   Mina.setActiveInstance(
     Mina.Network({
+      networkId: zekoNetwork.o1jsNetworkId,
       mina: graphql,
       archive
     })
@@ -218,7 +256,7 @@ async function main() {
   const payerNonce = readAccountNonce(payerAccount);
 
   if (zkappAccount.error) {
-    throw new Error(`x402 settlement zkapp not found at ${zkappAddress.toBase58()}`);
+    throw new Error(`Unable to fetch x402 settlement zkapp at ${zkappAddress.toBase58()}.`);
   }
 
   const zkapp = new X402SettlementContract(zkappAddress);
@@ -259,7 +297,7 @@ async function main() {
     beneficiaryAddress: beneficiary.toBase58(),
     graphql,
     archive,
-    amount: amountMina,
+    amount: amountNative,
     description: "Zeko x402 smoke-test rail"
   });
   const paymentContext = {
@@ -300,8 +338,8 @@ async function main() {
     paymentId,
     paymentContextDigest: unsignedPayload.paymentContextDigest,
     resource: paymentRequired.resource,
-    amountMina,
-    feeMina
+    amountNative,
+    feeNative
   });
   const preparedSettlement = await prepareX402SettlementContractCall({
     ...buildDefaultSettlementApplierInput({
@@ -322,7 +360,7 @@ async function main() {
   const transaction = await Mina.transaction(
     {
       sender: payerAddress,
-      fee: intent.transaction.feeNanomina,
+      fee: intent.transaction.feeNativeUnits ?? intent.transaction.feeNanomina,
       memo: intent.transaction.memo,
       ...(payerNonce !== null && payerNonce <= BigInt(Number.MAX_SAFE_INTEGER)
         ? { nonce: Number(payerNonce) }
@@ -335,7 +373,7 @@ async function main() {
       const senderUpdate = AccountUpdate.createSigned(payerAddress);
       senderUpdate.send({
         to: zkappAddress,
-        amount: UInt64.from(intent.accountUpdates[0].amountNanomina)
+        amount: UInt64.from(intent.accountUpdates[0].amountNativeUnits ?? intent.accountUpdates[0].amountNanomina)
       });
       await preparedSettlement.invoke();
     }
@@ -393,6 +431,7 @@ async function main() {
     status.attempts.every((attempt) => attempt.ok === false)
   ) {
     status = await waitForSettlementObservation({
+      graphql,
       payerAddress,
       zkappAddress,
       initialPayerNonce: payerNonce,
@@ -421,7 +460,7 @@ async function main() {
   );
 
   const ledger = new InMemorySettlementLedger({
-    sponsoredBudget: readOptionalEnv("X402_SPONSORED_BUDGET_MINA", "1.0"),
+    sponsoredBudget: readOptionalEnv("X402_SPONSORED_BUDGET_NATIVE", readOptionalEnv("X402_SPONSORED_BUDGET_MINA", "1.0")),
     budgetAsset: accepted.asset
   });
   const settlement = ledger.settle({
@@ -456,9 +495,13 @@ async function main() {
       {
         ok: true,
         network: {
+          networkId: zekoNetwork.networkId,
+          nodeNetworkId: zekoNetwork.nodeNetworkId ?? null,
+          o1jsNetworkId: zekoNetwork.o1jsNetworkId,
           graphql,
           archive,
-          explorer: zekoNetwork.explorer
+          explorer: zekoNetwork.explorer,
+          nativeAsset: zekoNetwork.nativeAsset ?? accepted.asset
         },
         contract: {
           zkappAddress: zkappAddress.toBase58(),

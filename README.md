@@ -38,7 +38,7 @@ X402_BASE_PAY_TO=0x...
 pnpm evm:facilitator
 ```
 
-The facilitator listens on `127.0.0.1:7422` by default. Set `X402_EVM_FACILITATOR_HOST=0.0.0.0` for hosted deploys. On Render, the service automatically uses Render's `PORT` when `X402_EVM_FACILITATOR_PORT` is not set. A simple Render config is included in [`render.yaml`](/Users/evankereiakes/Documents/Codex/zeko-x402/render.yaml).
+The facilitator listens on `127.0.0.1:7422` by default. Set `X402_EVM_FACILITATOR_HOST=0.0.0.0` for hosted deploys. On Render, the service automatically uses Render's `PORT` when `X402_EVM_FACILITATOR_PORT` is not set. A simple Render config is included in [`render.yaml`](render.yaml).
 
 Self-hosted means you run the verifier and relayer; it does not remove the need for an EVM RPC connection. The relayer still needs RPC access to read USDC balances/nonces and broadcast `transferWithAuthorization(...)`. Hosted production should use `X402_BASE_RPC_URLS` or `X402_ETHEREUM_RPC_URLS` with a private/dedicated HTTPS primary RPC and optional public fallback. Do not deploy a hosted facilitator with only `https://mainnet.base.org` or another shared public RPC.
 
@@ -61,7 +61,7 @@ pnpm smoke:ethereum-sepolia-reserve-release
 
 ### 3. Run the Zeko path
 
-Testnet is the default. For Zeko mainnet, set `X402_ZEKO_NETWORK=mainnet` and point `ZEKO_GRAPHQL` / `ZEKO_ARCHIVE` at the mainnet endpoints documented in [`docs/zeko-mainnet-deployment.md`](docs/zeko-mainnet-deployment.md).
+Zeko Ethereum Sepolia is the active Zeko-native rail. Use `X402_ZEKO_NETWORK=zeko:sepolia`, `ZEKO_GRAPHQL=https://sepolia.zeko.io/graphql`, and o1js signing network `ZEKO_O1JS_NETWORK_ID=testnet`.
 
 ```bash
 pnpm build:zkapp
@@ -97,14 +97,14 @@ pnpm doctor:rails
 
 ## Docs
 
-- [EVM hosted and self-hosted flows](/Users/evankereiakes/Documents/Codex/zeko-x402/docs/evm-hosted-facilitators.md)
-- [Reserve-release v2/v3/v4](/Users/evankereiakes/Documents/Codex/zeko-x402/docs/evm-reserve-release-v2.md)
-- [Zeko mainnet deployment](docs/zeko-mainnet-deployment.md)
-- [Multi-rail paid resource](/Users/evankereiakes/Documents/Codex/zeko-x402/docs/multirail-paid-resource.md)
-- [Adapter architecture](/Users/evankereiakes/Documents/Codex/zeko-x402/docs/adapter-architecture.md)
-- [Tenant onboarding](/Users/evankereiakes/Documents/Codex/zeko-x402/docs/tenant-onboarding.md)
-- [Tempo and Arc payout options](/Users/evankereiakes/Documents/Codex/zeko-x402/docs/tempo-arc-payout-options.md)
-- [OpenClaw app handoff](/Users/evankereiakes/Documents/Codex/zeko-x402/docs/openclaw-agent-handoff.md)
+- [EVM hosted and self-hosted flows](docs/evm-hosted-facilitators.md)
+- [Reserve-release v2/v3/v4](docs/evm-reserve-release-v2.md)
+- [Zeko Sepolia deployment](docs/zeko-sepolia-deployment.md)
+- [Multi-rail paid resource](docs/multirail-paid-resource.md)
+- [Adapter architecture](docs/adapter-architecture.md)
+- [Tenant onboarding](docs/tenant-onboarding.md)
+- [Tempo and Arc payout options](docs/tempo-arc-payout-options.md)
+- [OpenClaw app handoff](docs/openclaw-agent-handoff.md)
 
 ## Licensing And Commercial Terms
 

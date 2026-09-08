@@ -1,6 +1,6 @@
-# Testnet Smoke Flow
+# Zeko Sepolia Smoke Flow
 
-`zeko-x402` now includes a single-command Zeko testnet smoke runner at `pnpm smoke:zeko-flow`.
+`zeko-x402` includes a single-command Zeko Ethereum Sepolia smoke runner at `pnpm smoke:zeko-flow`.
 
 It exercises the intended happy path:
 
@@ -15,12 +15,14 @@ It exercises the intended happy path:
 ## Required env
 
 - `X402_ZEKO_NETWORK`
-  Default: `testnet`; set `mainnet` to use `zeko:zeko-mainnet`.
+  Default: `zeko:sepolia`.
 - `ZEKO_GRAPHQL`
-  Default: `https://testnet.zeko.io/graphql`
+  Default: `https://sepolia.zeko.io/graphql`
 - `ZEKO_ARCHIVE`
-  Default: `https://archive.testnet.zeko.io/graphql`
-- one of `X402_PAYER_PRIVATE_KEY`, `DEPLOYER_PRIVATE_KEY`, `MINA_PRIVATE_KEY`, `WALLET_PRIVATE_KEY`
+  Default: `https://sepolia.zeko.io/graphql`
+- `ZEKO_O1JS_NETWORK_ID`
+  Default: `testnet`; this is the o1js signing domain, not the x402 rail label.
+- one of `X402_PAYER_PRIVATE_KEY`, `X402_ZEKO_PRIVATE_KEY`, `DEPLOYER_PRIVATE_KEY`, `WALLET_PRIVATE_KEY`
 - `X402_ZKAPP_PUBLIC_KEY`
 
 ## Optional env
@@ -29,10 +31,10 @@ It exercises the intended happy path:
   Use an HTTP witness service instead of a local JSON file.
 - `X402_SETTLEMENT_STATE_PATH`
   Default local witness file when `X402_WITNESS_SERVICE_URL` is unset.
-- `X402_AMOUNT_MINA`
-  Default: `0.015` `tMINA` on testnet or `MINA` on mainnet
-- `X402_FEE_MINA`
-  Default: `0.10` `tMINA` on testnet or `MINA` on mainnet
+- `X402_AMOUNT_NATIVE`
+  Default: `0.015` `sETH`
+- `X402_FEE_NATIVE`
+  Default: `0.0002` `sETH`
 - `X402_SERVICE_ID`, `X402_SESSION_ID`, `X402_TURN_ID`, `X402_PAYMENT_ID`
 - `X402_BASE_URL`, `X402_PROOF_BUNDLE_URL`, `X402_VERIFY_URL`
 - `X402_WAIT_ATTEMPTS`, `X402_WAIT_INTERVAL_MS`
@@ -44,17 +46,18 @@ It exercises the intended happy path:
 3. Export `X402_ZKAPP_PUBLIC_KEY` plus a payer private key funded on the selected Zeko network.
 4. Run `pnpm smoke:zeko-flow`.
 
-## Mainnet
+## Network
 
-For Zeko mainnet:
+For Zeko Ethereum Sepolia:
 
 ```bash
-export X402_ZEKO_NETWORK=mainnet
-export ZEKO_GRAPHQL=https://mainnet.zeko.io/graphql
-export ZEKO_ARCHIVE=https://archive.mainnet.zeko.io/graphql
+export X402_ZEKO_NETWORK=zeko:sepolia
+export ZEKO_O1JS_NETWORK_ID=testnet
+export ZEKO_GRAPHQL=https://sepolia.zeko.io/graphql
+export ZEKO_ARCHIVE=https://sepolia.zeko.io/graphql
 ```
 
-Only run the live smoke after deploying a mainnet settlement zkApp, funding the payer with mainnet MINA, and pointing `X402_SETTLEMENT_STATE_PATH` or `X402_WITNESS_SERVICE_URL` at the witness state for that exact deployed contract.
+Only run the live smoke after deploying a Sepolia settlement zkApp, funding the payer with native `sETH`, and pointing `X402_SETTLEMENT_STATE_PATH` or `X402_WITNESS_SERVICE_URL` at the witness state for that exact deployed contract.
 
 The script prints JSON containing:
 

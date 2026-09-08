@@ -2,21 +2,58 @@ import { buildEvmRail, buildZekoRail, defaultZekoAssetSymbol } from "./facilitat
 
 export const MAX_RESERVE_RELEASE_PROTOCOL_FEE_BPS = 9_999;
 
-export const ZEKO_TESTNET_NETWORK = Object.freeze({
+export const ZEKO_SEPOLIA_NATIVE_TOKEN_ID = "wSHV2S4qX9jFsLjQo8r1BsMLH2ZRKsZx6EJd1sbozGPieEC4Jf";
+
+export const ZEKO_SEPOLIA_NETWORK = Object.freeze({
+  networkId: "zeko:sepolia",
+  nodeNetworkId: "zeko:testnet",
+  o1jsNetworkId: "testnet",
+  name: "Zeko Ethereum Sepolia",
+  graphql: "https://sepolia.zeko.io/graphql",
+  archive: "https://sepolia.zeko.io/graphql",
+  explorer: null,
+  nativeAsset: {
+    symbol: "sETH",
+    decimals: 9,
+    standard: "native",
+    tokenId: ZEKO_SEPOLIA_NATIVE_TOKEN_ID
+  }
+});
+
+export const RETIRED_ZEKO_MINA_TESTNET_NETWORK = Object.freeze({
   networkId: "zeko:testnet",
   o1jsNetworkId: "zeko",
   graphql: "https://testnet.zeko.io/graphql",
   archive: "https://archive.testnet.zeko.io/graphql",
-  explorer: "https://zekoscan.io/testnet"
+  explorer: "https://zekoscan.io/testnet",
+  retired: true
 });
 
-export const ZEKO_MAINNET_NETWORK = Object.freeze({
+export const RETIRED_ZEKO_MINA_MAINNET_NETWORK = Object.freeze({
   networkId: "zeko:zeko-mainnet",
   o1jsNetworkId: "zeko",
   graphql: "https://mainnet.zeko.io/graphql",
   archive: "https://archive.mainnet.zeko.io/graphql",
-  explorer: "https://zekoscan.io/mainnet"
+  explorer: "https://zekoscan.io/mainnet",
+  retired: true
 });
+
+// Compatibility exports. New executable flows should use ZEKO_SEPOLIA_NETWORK.
+export const ZEKO_TESTNET_NETWORK = ZEKO_SEPOLIA_NETWORK;
+export const ZEKO_MAINNET_NETWORK = RETIRED_ZEKO_MINA_MAINNET_NETWORK;
+
+export function isRetiredZekoEndpoint(value) {
+  const normalized = String(value ?? "").toLowerCase();
+  return normalized.includes("testnet.zeko.io") || normalized.includes("mainnet.zeko.io");
+}
+
+export function assertActiveZekoEndpoint(value, label = "Zeko endpoint") {
+  if (isRetiredZekoEndpoint(value)) {
+    throw new Error(`${label} points at a retired Mina-backed Zeko endpoint. Use https://sepolia.zeko.io/graphql.`);
+  }
+
+  return value;
+}
 
 export function resolveZekoNetwork(input = {}) {
   const requested = String(
@@ -28,28 +65,44 @@ export function resolveZekoNetwork(input = {}) {
   ).toLowerCase();
 
   if (
-    requested === "mainnet" ||
-    requested === "zeko-mainnet" ||
-    requested === ZEKO_MAINNET_NETWORK.networkId
+    requested === "" ||
+    requested === "testnet" ||
+    requested === "sepolia" ||
+    requested === "ethereum-sepolia" ||
+    requested === "zeko-sepolia" ||
+    requested === ZEKO_SEPOLIA_NETWORK.networkId ||
+    requested === ZEKO_SEPOLIA_NETWORK.nodeNetworkId
   ) {
-    return ZEKO_MAINNET_NETWORK;
+    return ZEKO_SEPOLIA_NETWORK;
   }
 
   if (
-    requested === "" ||
-    requested === "testnet" ||
-    requested === "zeko-testnet" ||
-    requested === ZEKO_TESTNET_NETWORK.networkId
+    requested === "mainnet" ||
+    requested === "zeko-mainnet" ||
+    requested === RETIRED_ZEKO_MINA_MAINNET_NETWORK.networkId
   ) {
-    return ZEKO_TESTNET_NETWORK;
+    if (input.allowRetired === true) {
+      return RETIRED_ZEKO_MINA_MAINNET_NETWORK;
+    }
+
+    throw new Error("Zeko Mina mainnet is retired for x402 execution. Use the Zeko Ethereum Sepolia rail.");
+  }
+
+  if (requested === "mina-testnet" || requested === "zeko-mina-testnet") {
+    if (input.allowRetired === true) {
+      return RETIRED_ZEKO_MINA_TESTNET_NETWORK;
+    }
+
+    throw new Error("The old Mina-backed Zeko testnet is retired for x402 execution. Use the Zeko Ethereum Sepolia rail.");
   }
 
   return Object.freeze({
     networkId: input.networkId ?? requested,
-    o1jsNetworkId: input.o1jsNetworkId ?? ZEKO_TESTNET_NETWORK.o1jsNetworkId,
-    graphql: input.graphql ?? ZEKO_TESTNET_NETWORK.graphql,
-    archive: input.archive ?? input.graphql ?? ZEKO_TESTNET_NETWORK.archive,
-    explorer: input.explorer ?? ZEKO_TESTNET_NETWORK.explorer
+    o1jsNetworkId: input.o1jsNetworkId ?? ZEKO_SEPOLIA_NETWORK.o1jsNetworkId,
+    graphql: input.graphql ?? ZEKO_SEPOLIA_NETWORK.graphql,
+    archive: input.archive ?? input.graphql ?? ZEKO_SEPOLIA_NETWORK.archive,
+    explorer: input.explorer ?? ZEKO_SEPOLIA_NETWORK.explorer,
+    nativeAsset: input.nativeAsset ?? ZEKO_SEPOLIA_NETWORK.nativeAsset
   });
 }
 
@@ -316,8 +369,10 @@ export function buildZekoSettlementContractRail(input) {
   }
 
   const zekoNetwork = resolveZekoNetwork(input);
-  const networkId = input.networkId ?? zekoNetwork.networkId;
+  const networkId = zekoNetwork.networkId;
   const assetSymbol = input.assetSymbol ?? defaultZekoAssetSymbol(networkId);
+  const graphql = assertActiveZekoEndpoint(input.graphql ?? zekoNetwork.graphql, "Zeko GraphQL");
+  const archive = assertActiveZekoEndpoint(input.archive ?? zekoNetwork.archive, "Zeko archive");
 
   return buildZekoRail({
     networkId,
@@ -334,13 +389,18 @@ export function buildZekoSettlementContractRail(input) {
     settlementModel: "x402-exact-settlement-zkapp-v1",
     assetSymbol,
     decimals: 9,
+    tokenId: input.tokenId ?? zekoNetwork.nativeAsset?.tokenId,
     extensions: {
       zeko: {
         primitive: "zeko-exact-settlement-zkapp-v1",
+        networkName: zekoNetwork.name ?? null,
+        nodeNetworkId: zekoNetwork.nodeNetworkId ?? null,
+        o1jsNetworkId: zekoNetwork.o1jsNetworkId,
+        nativeAsset: zekoNetwork.nativeAsset ?? null,
         contractAddress: input.contractAddress,
         beneficiaryAddress: input.beneficiaryAddress,
-        graphql: input.graphql ?? zekoNetwork.graphql,
-        archive: input.archive ?? zekoNetwork.archive,
+        graphql,
+        archive,
         explorer: input.explorer ?? zekoNetwork.explorer
       }
     }

@@ -16,6 +16,15 @@ export function readOptionalEnv(name: string, fallback: string): string {
   return value && value.trim().length > 0 ? value.trim() : fallback;
 }
 
+export function assertActiveZekoEndpoint(value: string, label = 'Zeko endpoint'): string {
+  const normalized = value.toLowerCase();
+  if (normalized.includes('testnet.zeko.io') || normalized.includes('mainnet.zeko.io')) {
+    throw new Error(`${label} points at a retired Mina-backed Zeko endpoint. Use https://sepolia.zeko.io/graphql.`);
+  }
+
+  return value;
+}
+
 export function hashHexToField(hex: string): Field {
   const clean = hex.replace(/^0x/i, '').trim();
 

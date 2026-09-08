@@ -86,7 +86,9 @@ export function buildSettlementCallArguments(o1js, input) {
   const paymentIdHash = hashTextToField(o1js, assertNonEmptyString("paymentId", input?.paymentId));
   const payer = PublicKey.fromBase58(assertNonEmptyString("payerAddress", input?.payerAddress));
   const beneficiary = PublicKey.fromBase58(assertNonEmptyString("beneficiaryAddress", input?.beneficiaryAddress));
-  const amountNanomina = UInt64.from(assertNonEmptyString("amountNanomina", input?.amountNanomina));
+  const amountNativeUnits = UInt64.from(
+    assertNonEmptyString("amountNativeUnits", input?.amountNativeUnits ?? input?.amountNanomina)
+  );
   const paymentContextDigest = hashDigestToField(
     o1js,
     assertNonEmptyString("paymentContextDigest", input?.paymentContextDigest)
@@ -102,7 +104,8 @@ export function buildSettlementCallArguments(o1js, input) {
     paymentIdHash,
     payer,
     beneficiary,
-    amountNanomina,
+    amountNativeUnits,
+    amountNanomina: amountNativeUnits,
     paymentContextDigest,
     resourceDigest,
     paymentKey
@@ -111,12 +114,13 @@ export function buildSettlementCallArguments(o1js, input) {
 
 export function buildSettlementLeaf(o1js, input) {
   const { Poseidon } = o1js;
+  const amount = input.amountNativeUnits ?? input.amountNanomina;
   return Poseidon.hash([
     input.requestIdHash,
     input.paymentIdHash,
     ...input.payer.toFields(),
     ...input.beneficiary.toFields(),
-    input.amountNanomina.value ?? input.amountNanomina,
+    amount?.value ?? amount,
     input.paymentContextDigest,
     input.resourceDigest,
     input.serviceCommitment
@@ -264,7 +268,7 @@ export async function prepareX402SettlementContractCall(input = {}) {
       callArgs.paymentIdHash,
       callArgs.payer,
       callArgs.beneficiary,
-      callArgs.amountNanomina,
+      callArgs.amountNativeUnits,
       callArgs.paymentContextDigest,
       callArgs.resourceDigest,
       witness

@@ -19,7 +19,7 @@ export class X402ExactSettlementEvent extends Struct({
     paymentIdHash: Field,
     payer: PublicKey,
     beneficiary: PublicKey,
-    amountNanomina: UInt64,
+    amountNativeUnits: UInt64,
     paymentContextDigest: Field,
     resourceDigest: Field,
     settlementLeaf: Field,
@@ -63,20 +63,20 @@ export class X402SettlementContract extends SmartContract {
         currentServiceCommitment.assertNotEquals(Field(0));
         this.beneficiary.set(nextBeneficiary);
     }
-    async settleExact(requestIdHash, paymentIdHash, payer, beneficiary, amountNanomina, paymentContextDigest, resourceDigest, paymentWitness) {
+    async settleExact(requestIdHash, paymentIdHash, payer, beneficiary, amountNativeUnits, paymentContextDigest, resourceDigest, paymentWitness) {
         const configuredBeneficiary = this.beneficiary.getAndRequireEquals();
         const currentServiceCommitment = this.serviceCommitment.getAndRequireEquals();
         const currentRoot = this.settlementRoot.getAndRequireEquals();
         configuredBeneficiary.assertEquals(beneficiary);
         currentServiceCommitment.assertNotEquals(Field(0));
-        amountNanomina.assertGreaterThan(UInt64.zero);
+        amountNativeUnits.assertGreaterThan(UInt64.zero);
         const paymentKey = Poseidon.hash([requestIdHash, paymentIdHash]);
         const settlementLeaf = Poseidon.hash([
             requestIdHash,
             paymentIdHash,
             ...payer.toFields(),
             ...beneficiary.toFields(),
-            amountNanomina.value,
+            amountNativeUnits.value,
             paymentContextDigest,
             resourceDigest,
             currentServiceCommitment
@@ -86,13 +86,13 @@ export class X402SettlementContract extends SmartContract {
         keyBefore.assertEquals(paymentKey);
         const [nextRoot] = paymentWitness.computeRootAndKey(settlementLeaf);
         this.settlementRoot.set(nextRoot);
-        this.send({ to: beneficiary, amount: amountNanomina });
+        this.send({ to: beneficiary, amount: amountNativeUnits });
         this.emitEvent('exactSettlement', new X402ExactSettlementEvent({
             requestIdHash,
             paymentIdHash,
             payer,
             beneficiary,
-            amountNanomina,
+            amountNativeUnits,
             paymentContextDigest,
             resourceDigest,
             settlementLeaf,

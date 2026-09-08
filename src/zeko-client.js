@@ -106,7 +106,7 @@ const ZEKO_TX_STATUS_VARIANTS = [
     name: "transactionStatus(zkappTransaction)",
     query: "query($hash:String!){ transactionStatus(zkappTransaction:$hash) }",
     extract(data) {
-      return typeof data?.transactionStatus === "string"
+      return typeof data?.transactionStatus === "string" || Array.isArray(data?.transactionStatus)
         ? {
             found: true,
             status: data.transactionStatus,
@@ -147,6 +147,15 @@ const ZEKO_TX_STATUS_VARIANTS = [
 ];
 
 function normalizeStatus(value) {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const normalized = normalizeStatus(entry);
+      if (normalized.length > 0) return normalized;
+    }
+
+    return "";
+  }
+
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
@@ -377,7 +386,7 @@ export async function prepareSignedZekoSettlementAuthorization(intent, input) {
     assertNonEmptyString("contractAddress", settlementUpdate.contractAddress)
   );
   const activeNetwork = Mina.Network({
-    networkId: intent?.network?.o1jsNetworkId ?? "zeko",
+    networkId: intent?.network?.o1jsNetworkId ?? "testnet",
     mina: assertNonEmptyString("graphql", intent?.network?.graphql),
     archive: intent?.network?.archive
   });
@@ -404,7 +413,7 @@ export async function prepareSignedZekoSettlementAuthorization(intent, input) {
   const transaction = await Mina.transaction(
     {
       sender: feePayer,
-      fee: intent.transaction.feeNanomina,
+      fee: intent.transaction.feeNativeUnits ?? intent.transaction.feeNanomina,
       memo: intent.transaction.memo,
       ...(input?.nonce !== undefined ? { nonce: input.nonce } : {}),
       ...(typeof intent.transaction.validUntil === "string" && intent.transaction.validUntil.length > 0
@@ -415,7 +424,7 @@ export async function prepareSignedZekoSettlementAuthorization(intent, input) {
       const senderUpdate = AccountUpdate.createSigned(sender);
       senderUpdate.send({
         to: contractAddress,
-        amount: UInt64.from(transferUpdate.amountNanomina)
+        amount: UInt64.from(transferUpdate.amountNativeUnits ?? transferUpdate.amountNanomina)
       });
       if (preparedSettlementContractCall) {
         await preparedSettlementContractCall.invoke();

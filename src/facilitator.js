@@ -13,7 +13,7 @@ export const X402_VERIFY_ROUTE = "/api/x402/verify";
 export const X402_SETTLE_ROUTE = "/api/x402/settle";
 
 export function defaultZekoAssetSymbol(networkId) {
-  return String(networkId ?? "").toLowerCase().endsWith(":testnet") ? "tMINA" : "MINA";
+  return "sETH";
 }
 
 function buildQueryString(sessionId, turnId) {
@@ -96,7 +96,7 @@ function findMatchingOption(requirements, payload) {
   ));
 }
 
-export function exactPriceMina(serviceTier = "private") {
+export function exactPriceNative(serviceTier = "private") {
   if (serviceTier === "fast") {
     return "0.010";
   }
@@ -111,6 +111,8 @@ export function exactPriceMina(serviceTier = "private") {
 
   return "0.015";
 }
+
+export const exactPriceMina = exactPriceNative;
 
 export function buildRequestId(input) {
   return `req_${canonicalDigest(input).sha256Hex.slice(0, 24)}`;
@@ -135,7 +137,7 @@ export function buildZekoRail(input) {
       decimals: input.decimals ?? 9,
       standard: "native"
     },
-    amount: input.amount ?? exactPriceMina(input.serviceTier),
+    amount: input.amount ?? exactPriceNative(input.serviceTier),
     payTo: input.payTo,
     settlementModel: input.settlementModel ?? "reserve-settle-refund",
     description: input.description ?? "Zeko-native settlement for proof-backed access.",
@@ -236,7 +238,7 @@ export function buildCatalog(input) {
     serviceId: input.serviceId,
     resource: {
       chain: "zeko-service",
-      serviceNetworkId: input.serviceNetworkId ?? zekoRail?.network ?? "zeko:testnet"
+      serviceNetworkId: input.serviceNetworkId ?? zekoRail?.network ?? "zeko:sepolia"
     },
     facilitator: {
       mode: "multi-rail",

@@ -71,7 +71,7 @@ function amountToAtomicUnits(input) {
 export class InMemorySettlementLedger {
   constructor(input = {}) {
     const budgetAsset = input.budgetAsset ?? {
-      symbol: "MINA",
+      symbol: "sETH",
       decimals: 9,
       standard: "native"
     };

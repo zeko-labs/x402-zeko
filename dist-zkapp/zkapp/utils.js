@@ -11,6 +11,13 @@ export function readOptionalEnv(name, fallback) {
     const value = process.env[name];
     return value && value.trim().length > 0 ? value.trim() : fallback;
 }
+export function assertActiveZekoEndpoint(value, label = 'Zeko endpoint') {
+    const normalized = value.toLowerCase();
+    if (normalized.includes('testnet.zeko.io') || normalized.includes('mainnet.zeko.io')) {
+        throw new Error(`${label} points at a retired Mina-backed Zeko endpoint. Use https://sepolia.zeko.io/graphql.`);
+    }
+    return value;
+}
 export function hashHexToField(hex) {
     const clean = hex.replace(/^0x/i, '').trim();
     if (!/^[0-9a-fA-F]+$/.test(clean)) {

@@ -7,6 +7,7 @@ import {
   BASE_MAINNET_USDC,
   ETHEREUM_MAINNET_USDC,
   MAX_RESERVE_RELEASE_PROTOCOL_FEE_BPS,
+  assertActiveZekoEndpoint,
   buildCustomEvmTokenTarget,
   resolveZekoNetwork
 } from "./targets.js";
@@ -60,6 +61,10 @@ function buildZekoSettlementMemo(input) {
   return input.memo ?? `x402:${shortId(input.requestId)}:${shortId(input.paymentId)}`;
 }
 
+function readNativeAmount(input, nativeName, legacyMinaName, fallback) {
+  return input[nativeName] ?? input[legacyMinaName] ?? fallback;
+}
+
 export function buildZekoExactSettlementIntent(input) {
   if (typeof input?.contractAddress !== "string" || input.contractAddress.length === 0) {
     throw new Error("contractAddress is required.");
@@ -82,18 +87,20 @@ export function buildZekoExactSettlementIntent(input) {
   }
 
   const zekoNetwork = resolveZekoNetwork(input);
-  const networkId = input.networkId ?? zekoNetwork.networkId;
+  const networkId = zekoNetwork.networkId;
   const assetSymbol = input.assetSymbol ?? defaultZekoAssetSymbol(networkId);
+  const graphql = assertActiveZekoEndpoint(input.graphql ?? zekoNetwork.graphql, "Zeko GraphQL");
+  const archive = assertActiveZekoEndpoint(input.archive ?? zekoNetwork.archive, "Zeko archive");
   const paymentContextDigest = input?.paymentContextDigest ?? input?.authorizationDigest;
 
   if (typeof paymentContextDigest !== "string" || paymentContextDigest.length === 0) {
     throw new Error("paymentContextDigest is required.");
   }
 
-  const amountMina = input.amountMina ?? "0.015";
-  const feeMina = input.feeMina ?? "0.10";
-  const amountNanomina = toAtomicUnits(amountMina, 9).toString();
-  const feeNanomina = toAtomicUnits(feeMina, 9).toString();
+  const amountNative = readNativeAmount(input, "amountNative", "amountMina", "0.015");
+  const feeNative = readNativeAmount(input, "feeNative", "feeMina", "0.0002");
+  const amountNativeUnits = toAtomicUnits(amountNative, 9).toString();
+  const feeNativeUnits = toAtomicUnits(feeNative, 9).toString();
   const resourceDigest =
     input.resourceDigest ??
     canonicalDigest({
@@ -108,16 +115,23 @@ export function buildZekoExactSettlementIntent(input) {
     settlementRail: "zeko",
     network: {
       networkId,
+      nodeNetworkId: zekoNetwork.nodeNetworkId ?? null,
       o1jsNetworkId: input.o1jsNetworkId ?? zekoNetwork.o1jsNetworkId,
-      graphql: input.graphql ?? zekoNetwork.graphql,
-      archive: input.archive ?? zekoNetwork.archive
+      graphql,
+      archive,
+      nativeAsset: zekoNetwork.nativeAsset ?? {
+        symbol: assetSymbol,
+        decimals: 9,
+        standard: "native"
+      }
     },
     transaction: {
       builder: "o1js",
       kind: "zkapp",
       sender: input.payerAddress,
       feePayer: input.feePayerAddress ?? input.payerAddress,
-      feeNanomina,
+      feeNativeUnits,
+      feeNanomina: feeNativeUnits,
       memo: buildZekoSettlementMemo(input),
       ...(typeof input.validUntil === "string" && input.validUntil.length > 0
         ? { validUntil: input.validUntil }
@@ -134,7 +148,8 @@ export function buildZekoExactSettlementIntent(input) {
           decimals: 9,
           standard: "native"
         },
-        amountNanomina
+        amountNativeUnits,
+        amountNanomina: amountNativeUnits
       },
       {
         role: "settlement-zkapp",
@@ -146,7 +161,8 @@ export function buildZekoExactSettlementIntent(input) {
           paymentId: input.paymentId,
           payerAddress: input.payerAddress,
           beneficiaryAddress: input.beneficiaryAddress,
-          amountNanomina,
+          amountNativeUnits,
+          amountNanomina: amountNativeUnits,
           paymentContextDigest,
           resourceDigest,
           ...(typeof input.expiresAtIso === "string" && input.expiresAtIso.length > 0
@@ -163,7 +179,7 @@ export function buildZekoExactSettlementIntent(input) {
         "paymentId",
         "payerAddress",
         "beneficiaryAddress",
-        "amountNanomina",
+        "amountNativeUnits",
         "paymentContextDigest",
         "resourceDigest"
       ]
@@ -180,21 +196,24 @@ export function buildZekoNativeTransferFallbackIntent(input) {
     throw new Error("to is required.");
   }
 
-  const amountMina = input.amountMina ?? "0.015";
-  const feeMina = input.feeMina ?? "0.10";
+  const amountNative = readNativeAmount(input, "amountNative", "amountMina", "0.015");
+  const feeNative = readNativeAmount(input, "feeNative", "feeMina", "0.0002");
 
   const zekoNetwork = resolveZekoNetwork(input);
-  const networkId = input.networkId ?? zekoNetwork.networkId;
+  const networkId = zekoNetwork.networkId;
+  const graphql = assertActiveZekoEndpoint(input.graphql ?? zekoNetwork.graphql, "Zeko GraphQL");
 
   return {
     primitive: "zeko-native-payment-v1",
     settlementRail: "zeko",
     network: {
       networkId,
-      graphql: input.graphql ?? zekoNetwork.graphql
+      nodeNetworkId: zekoNetwork.nodeNetworkId ?? null,
+      o1jsNetworkId: input.o1jsNetworkId ?? zekoNetwork.o1jsNetworkId,
+      graphql
     },
     graphql: {
-      endpoint: input.graphql ?? zekoNetwork.graphql,
+      endpoint: graphql,
       operationName: "SendPayment",
       query:
         "mutation SendPayment($input: SendPaymentInput!, $signature: SignatureInput) { sendPayment(input: $input, signature: $signature) { payment { hash amount fee from to nonce } } }",
@@ -202,8 +221,8 @@ export function buildZekoNativeTransferFallbackIntent(input) {
         input: {
           from: input.from,
           to: input.to,
-          amount: toAtomicUnits(amountMina, 9).toString(),
-          fee: toAtomicUnits(feeMina, 9).toString()
+          amount: toAtomicUnits(amountNative, 9).toString(),
+          fee: toAtomicUnits(feeNative, 9).toString()
         }
       }
     }

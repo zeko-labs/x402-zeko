@@ -11,7 +11,7 @@ import {
   HTTPFacilitatorClient,
   InMemorySettlementLedger,
   X402_SETTLEMENT_METHOD,
-  ZEKO_MAINNET_NETWORK,
+  ZEKO_SEPOLIA_NETWORK,
   assertPaymentPayload,
   buildAuthorizationDigest,
   buildCircleGatewayBaseUsdcRail,
@@ -45,15 +45,17 @@ import {
   prepareSignedZekoSettlementAuthorization,
   persistSettlementWitnessUpdate,
   readSettlementStore,
+  resolveZekoNetwork,
   serializeMerkleMapWitness,
   submitZekoAuthorization,
-  verifyPayment
+  verifyPayment,
+  waitForZekoTransaction
 } from "../src/index.js";
 
 function sampleContext() {
   return {
     serviceId: "zeko-proof-service",
-    serviceNetworkId: "zeko:testnet",
+    serviceNetworkId: "zeko:sepolia",
     baseUrl: "https://payments.example",
     proofBundleUrl: "https://payments.example/api/proof",
     verifyUrl: "https://payments.example/api/proof/verify",
@@ -90,50 +92,95 @@ test("builds multi-rail Zeko and EVM payment options for one resource", () => {
   assert.equal(catalog.facilitator.mode, "multi-rail");
   assert.equal(catalog.routes[0].accepts.length, 2);
   assert.equal(catalog.routes[0].accepts[0].scheme, "exact");
-  assert.equal(zekoOption.network, "zeko:testnet");
-  assert.equal(zekoOption.asset.symbol, "tMINA");
+  assert.equal(zekoOption.network, "zeko:sepolia");
+  assert.equal(zekoOption.asset.symbol, "sETH");
+  assert.equal(zekoOption.extensions.zeko.nativeAsset.tokenId, ZEKO_SEPOLIA_NETWORK.nativeAsset.tokenId);
   assert.equal(zekoOption.payTo, "B62qcontract11111111111111111111111111111111111111111111111111111");
   assert.equal(zekoOption.extensions.zeko.primitive, "zeko-exact-settlement-zkapp-v1");
   assert.equal(evmOption.network, "eip155:8453");
   assert.equal(evmOption.asset.symbol, "USDC");
 });
 
-test("builds Zeko mainnet settlement rails and intents", () => {
+test("builds Zeko Ethereum Sepolia settlement rails and intents", () => {
   const rail = buildZekoSettlementContractRail({
-    network: "mainnet",
+    network: "sepolia",
     contractAddress: "B62qcontract11111111111111111111111111111111111111111111111111111",
     beneficiaryAddress: "B62qbeneficiary1111111111111111111111111111111111111111111111111",
     amount: "0.015",
     bundleDigestSha256: "proof_bundle_digest_demo"
   });
   const intent = buildZekoExactSettlementIntent({
-    network: "mainnet",
+    network: "sepolia",
     contractAddress: rail.payTo,
     beneficiaryAddress: rail.extensions.zeko.beneficiaryAddress,
     payerAddress: "B62qpayer1111111111111111111111111111111111111111111111111111111",
-    requestId: "req_zeko_mainnet_demo",
-    paymentId: "pay_zeko_mainnet_demo",
+    requestId: "req_zeko_sepolia_demo",
+    paymentId: "pay_zeko_sepolia_demo",
     paymentContextDigest: "a".repeat(64),
-    amountMina: rail.amount
+    amountNative: rail.amount
   });
   const catalog = buildCatalog({
-    serviceId: "zeko-mainnet-service",
+    serviceId: "zeko-sepolia-service",
     baseUrl: "https://payments.example",
     proofBundleUrl: "https://payments.example/api/proof",
     verifyUrl: "https://payments.example/api/proof/verify",
-    sessionId: "session_mainnet",
+    sessionId: "session_sepolia",
     rails: [rail]
   });
 
-  assert.equal(ZEKO_MAINNET_NETWORK.networkId, "zeko:zeko-mainnet");
-  assert.equal(catalog.resource.serviceNetworkId, "zeko:zeko-mainnet");
-  assert.equal(rail.network, "zeko:zeko-mainnet");
-  assert.equal(rail.asset.symbol, "MINA");
-  assert.equal(rail.extensions.zeko.graphql, "https://mainnet.zeko.io/graphql");
-  assert.equal(rail.extensions.zeko.archive, "https://archive.mainnet.zeko.io/graphql");
-  assert.equal(intent.network.networkId, "zeko:zeko-mainnet");
-  assert.equal(intent.network.graphql, "https://mainnet.zeko.io/graphql");
-  assert.equal(intent.accountUpdates[0].asset.symbol, "MINA");
+  assert.equal(ZEKO_SEPOLIA_NETWORK.networkId, "zeko:sepolia");
+  assert.equal(ZEKO_SEPOLIA_NETWORK.nodeNetworkId, "zeko:testnet");
+  assert.equal(ZEKO_SEPOLIA_NETWORK.o1jsNetworkId, "testnet");
+  assert.equal(catalog.resource.serviceNetworkId, "zeko:sepolia");
+  assert.equal(rail.network, "zeko:sepolia");
+  assert.equal(rail.asset.symbol, "sETH");
+  assert.equal(rail.extensions.zeko.nativeAsset.tokenId, ZEKO_SEPOLIA_NETWORK.nativeAsset.tokenId);
+  assert.equal(rail.extensions.zeko.graphql, "https://sepolia.zeko.io/graphql");
+  assert.equal(rail.extensions.zeko.archive, "https://sepolia.zeko.io/graphql");
+  assert.equal(rail.extensions.zeko.nodeNetworkId, "zeko:testnet");
+  assert.equal(intent.network.networkId, "zeko:sepolia");
+  assert.equal(intent.network.o1jsNetworkId, "testnet");
+  assert.equal(intent.network.graphql, "https://sepolia.zeko.io/graphql");
+  assert.equal(intent.accountUpdates[0].asset.symbol, "sETH");
+  assert.equal(intent.accountUpdates[0].amountNativeUnits, "15000000");
+});
+
+test("rejects retired Zeko Mina network selectors and endpoints", () => {
+  assert.throws(
+    () => resolveZekoNetwork({ network: "mainnet" }),
+    /Zeko Mina mainnet is retired/
+  );
+  assert.throws(
+    () =>
+      buildZekoSettlementContractRail({
+        contractAddress: "B62qcontract11111111111111111111111111111111111111111111111111111",
+        beneficiaryAddress: "B62qbeneficiary1111111111111111111111111111111111111111111111111",
+        graphql: "https://testnet.zeko.io/graphql"
+      }),
+    /retired Mina-backed Zeko endpoint/
+  );
+});
+
+test("accepts Zeko gateway Applied status arrays", async () => {
+  const status = await waitForZekoTransaction("5Jzkapphash", {
+    endpoint: "https://sepolia.zeko.io/graphql",
+    attempts: 1,
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            transactionStatus: ["Applied"]
+          }
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        }
+      )
+  });
+
+  assert.equal(status.accepted, true);
+  assert.deepEqual(status.status, ["Applied"]);
 });
 
 test("verifies and settles either Zeko-native or EVM payments", () => {
@@ -351,17 +398,17 @@ test("builds concrete settlement intents for the chosen Zeko and Base targets", 
     requestId: "req_demo_001",
     paymentId: "pay_demo_001",
     paymentContextDigest: "ctx_demo_001",
-    amountMina: "0.015"
+    amountNative: "0.015"
   });
   assert.equal(zekoIntent.primitive, "zeko-exact-settlement-zkapp-v1");
-  assert.equal(zekoIntent.accountUpdates[0].asset.symbol, "tMINA");
+  assert.equal(zekoIntent.accountUpdates[0].asset.symbol, "sETH");
   assert.equal(zekoIntent.accountUpdates[0].to, "B62qcontract11111111111111111111111111111111111111111111111111111");
   assert.equal(zekoIntent.accountUpdates[1].method, "settleExact");
 
   const zekoFallback = buildZekoNativeTransferFallbackIntent({
     from: "B62qpayer1111111111111111111111111111111111111111111111111111111",
     to: "B62qcontract11111111111111111111111111111111111111111111111111111",
-    amountMina: "0.015"
+    amountNative: "0.015"
   });
   assert.equal(zekoFallback.primitive, "zeko-native-payment-v1");
   assert.equal(zekoFallback.graphql.operationName, "SendPayment");
@@ -667,7 +714,7 @@ test("submits signed Zeko native payments and signed zkapp commands", async () =
   const nativeIntent = buildZekoNativeTransferFallbackIntent({
     from: "B62qpayer1111111111111111111111111111111111111111111111111111111",
     to: "B62qcontract11111111111111111111111111111111111111111111111111111",
-    amountMina: "0.015"
+    amountNative: "0.015"
   });
   const nativeAuthorization = buildSignedZekoNativePaymentAuthorization(nativeIntent, {
     paymentInput: {
@@ -689,7 +736,7 @@ test("submits signed Zeko native payments and signed zkapp commands", async () =
     requestId: "req_demo_002",
     paymentId: "pay_demo_002",
     paymentContextDigest: "ctx_demo_002",
-    amountMina: "0.015"
+    amountNative: "0.015"
   });
   const zkappAuthorization = buildSignedZekoZkappAuthorization(zkappIntent, {
     zkappCommand: {
@@ -800,8 +847,8 @@ test("prepares a signed Zeko settlement authorization with injected o1js primiti
       requestId: "req_demo_003",
       paymentId: "pay_demo_003",
       settlementRail: "zeko",
-      networkId: "zeko:testnet",
-      asset: { symbol: "tMINA", decimals: 9, standard: "native" },
+      networkId: "zeko:sepolia",
+      asset: { symbol: "sETH", decimals: 9, standard: "native" },
       amount: "0.015",
       payer: "B62qpayer1111111111111111111111111111111111111111111111111111111",
       payTo: "B62qcontract11111111111111111111111111111111111111111111111111111",
@@ -810,7 +857,7 @@ test("prepares a signed Zeko settlement authorization with injected o1js primiti
       issuedAtIso: "2026-04-23T12:00:00.000Z",
       expiresAtIso: "2099-01-01T00:00:00.000Z"
     }),
-    amountMina: "0.015"
+    amountNative: "0.015"
   });
 
   const authorization = await prepareSignedZekoSettlementAuthorization(intent, {
@@ -875,14 +922,14 @@ test("prepares a signed Zeko settlement authorization through the default settle
       calls.push("compile");
     }
 
-    async [X402_SETTLEMENT_METHOD](requestIdHash, paymentIdHash, payer, beneficiary, amountNanomina, paymentContextDigest, resourceDigest, witness) {
+    async [X402_SETTLEMENT_METHOD](requestIdHash, paymentIdHash, payer, beneficiary, amountNativeUnits, paymentContextDigest, resourceDigest, witness) {
       calls.push([
         X402_SETTLEMENT_METHOD,
         requestIdHash.toString(),
         paymentIdHash.toString(),
         payer.toBase58(),
         beneficiary.toBase58(),
-        amountNanomina.value ?? amountNanomina,
+        amountNativeUnits.value ?? amountNativeUnits,
         paymentContextDigest.toString(),
         resourceDigest.toString(),
         witness.witnessKey
@@ -989,7 +1036,7 @@ test("prepares a signed Zeko settlement authorization through the default settle
     paymentId: "pay_demo_004",
     paymentContextDigest: "ctx_demo_004",
     resourceDigest: "resource_demo_004",
-    amountMina: "0.015"
+    amountNative: "0.015"
   });
 
   const authorization = await prepareSignedZekoSettlementAuthorization(intent, {

@@ -6,6 +6,7 @@ import { privateKeyToAccount } from "viem/accounts";
 
 import { X402SettlementContract } from "../dist-zkapp/contracts/X402SettlementContract.js";
 import {
+  assertActiveZekoEndpoint,
   computeSettlementStoreRoot,
   readSettlementStore,
   resolveZekoNetwork
@@ -324,14 +325,11 @@ async function fetchSettlementEvents(archiveUrl, address) {
           timestamp
         }
         eventData {
-          accountUpdateId
           data
           transactionInfo {
             hash
             memo
             status
-            authorizationKind
-            sequenceNumber
           }
         }
       }
@@ -370,12 +368,12 @@ async function inspectZeko() {
     network: readOptionalEnv("X402_ZEKO_NETWORK"),
     networkId: readOptionalEnv("X402_ZEKO_NETWORK_ID")
   });
-  const graphql = readOptionalEnv("ZEKO_GRAPHQL", zekoNetwork.graphql);
-  const archive = readOptionalEnv("ZEKO_ARCHIVE", zekoNetwork.archive);
+  const rawGraphql = readOptionalEnv("ZEKO_GRAPHQL", zekoNetwork.graphql);
+  const rawArchive = readOptionalEnv("ZEKO_ARCHIVE", zekoNetwork.archive);
   const payerKey = readFirstEnv([
     "X402_PAYER_PRIVATE_KEY",
+    "X402_ZEKO_PRIVATE_KEY",
     "DEPLOYER_PRIVATE_KEY",
-    "MINA_PRIVATE_KEY",
     "WALLET_PRIVATE_KEY"
   ]);
   const zkappPublicKeyBase58 = readOptionalEnv("X402_ZKAPP_PUBLIC_KEY");
@@ -386,9 +384,23 @@ async function inspectZeko() {
   );
   const missing = [];
   const errors = [];
+  let graphql = rawGraphql;
+  let archive = rawArchive;
+
+  try {
+    graphql = assertActiveZekoEndpoint(rawGraphql, "ZEKO_GRAPHQL");
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : String(error));
+  }
+
+  try {
+    archive = assertActiveZekoEndpoint(rawArchive, "ZEKO_ARCHIVE");
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : String(error));
+  }
 
   if (!payerKey) {
-    missing.push("X402_PAYER_PRIVATE_KEY or DEPLOYER_PRIVATE_KEY or MINA_PRIVATE_KEY or WALLET_PRIVATE_KEY");
+    missing.push("X402_PAYER_PRIVATE_KEY or X402_ZEKO_PRIVATE_KEY or DEPLOYER_PRIVATE_KEY or WALLET_PRIVATE_KEY");
   }
 
   if (!zkappPublicKeyBase58) {
@@ -413,6 +425,7 @@ async function inspectZeko() {
     try {
       Mina.setActiveInstance(
         Mina.Network({
+          networkId: zekoNetwork.o1jsNetworkId,
           mina: graphql,
           archive
         })
@@ -422,7 +435,9 @@ async function inspectZeko() {
       const accountResult = await fetchAccount({ publicKey: zkappAddress });
 
       if (accountResult.error) {
-        errors.push(`x402 settlement zkapp not found at ${zkappPublicKeyBase58}`);
+        errors.push(
+          `Unable to fetch x402 settlement zkapp at ${zkappPublicKeyBase58}; verify ZEKO_GRAPHQL and Node network access.`
+        );
       } else {
         const zkapp = new X402SettlementContract(zkappAddress);
         live = {
@@ -481,11 +496,11 @@ async function inspectZeko() {
           : "Current zkApp settlementRoot does not match the available witness state. Point at the matching witness store, or deploy a fresh zkApp with a fresh witness store.";
     recommendedAction =
       missing.length > 0
-        ? `${mismatchAction} Also set a funded Mina/Zeko payer key before retrying the live smoke flow.`
+        ? `${mismatchAction} Also set a funded Zeko Sepolia payer key before retrying the live smoke flow.`
         : mismatchAction;
   } else if (missing.length > 0) {
     recommendedAction =
-      "Set a funded Mina/Zeko payer key plus X402_ZKAPP_PUBLIC_KEY before running the live Zeko smoke flow.";
+      "Set a funded Zeko Sepolia payer key plus X402_ZKAPP_PUBLIC_KEY before running the live Zeko smoke flow.";
   } else if (errors.length > 0) {
     recommendedAction =
       "Resolve the reported Zeko network or witness-store errors, then rerun the doctor.";
@@ -494,6 +509,8 @@ async function inspectZeko() {
   return {
     ready,
     networkId: zekoNetwork.networkId,
+    nodeNetworkId: zekoNetwork.nodeNetworkId ?? null,
+    o1jsNetworkId: zekoNetwork.o1jsNetworkId,
     graphql,
     archive,
     explorer: zekoNetwork.explorer,

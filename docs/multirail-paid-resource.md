@@ -4,7 +4,7 @@ The recommended shape for a Zeko-backed x402 service is one `402 Payment Require
 
 1. Ethereum mainnet USDC as a first-class EVM rail.
 2. Base mainnet USDC as a first-class EVM rail.
-3. Zeko settlement-contract rail alongside them, so the same resource can offer a ZK-native path without forking the front door.
+3. Zeko Ethereum Sepolia settlement-contract rail alongside them, so the same resource can offer a ZK-native path without forking the front door.
 
 The standalone script for this is:
 
@@ -20,7 +20,7 @@ Behavior:
 - If `X402_BASE_PAY_TO` or `X402_EVM_PAY_TO` is present, Base is added too.
 - If `X402_ZKAPP_PUBLIC_KEY` is present, the script adds the Zeko zkApp rail.
 - If the Zeko beneficiary is not provided explicitly, the script reads it from the deployed settlement contract on the selected Zeko network.
-- Set `X402_ZEKO_NETWORK=mainnet` to advertise a Zeko mainnet settlement zkApp instead of the default testnet rail.
+- Set `X402_ZEKO_NETWORK=zeko:sepolia` and `ZEKO_O1JS_NETWORK_ID=testnet` to advertise the active Zeko Sepolia settlement zkApp.
 
 This keeps the front door boring and compatible:
 
@@ -32,6 +32,6 @@ Then the service can let the client choose:
 
 - the normal Ethereum/EVM path
 - the normal Base/EVM path
-- the Zeko/ZK path
+- the Zeko Ethereum Sepolia/ZK path
 
 That separation is deliberate. Compatibility comes from the HTTP/x402 layer, while differentiation comes from the Zeko rail and whatever verified-result or privacy extensions sit behind it.

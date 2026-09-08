@@ -12,7 +12,12 @@ The standalone package now includes a concrete zkApp contract interface at `cont
 
 ## Main method
 
-`settleExact(requestIdHash, paymentIdHash, payer, beneficiary, amountNanomina, paymentContextDigest, resourceDigest, paymentWitness)`
+`settleExact(requestIdHash, paymentIdHash, payer, beneficiary, amountNativeUnits, paymentContextDigest, resourceDigest, paymentWitness)`
+
+`amountNativeUnits` is denominated in the active Zeko rail's native asset. On
+Zeko Ethereum Sepolia that asset is `sETH` with 9 decimals. The JS helpers still
+accept the older `amountNanomina` field as a compatibility alias, but new code
+should emit `amountNativeUnits`.
 
 The method:
 
